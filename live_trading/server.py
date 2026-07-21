@@ -55,7 +55,29 @@ async def _run_robot() -> None:
 
 
 async def _main() -> None:
-    await asyncio.gather(_run_health_server(), _run_robot())
+    # Start the health server as a background task first so that Render's
+    # health check can respond while the trading engine is initialising
+    # (MetaAPI sync can take 30-120 s) or if the engine exits due to a
+    # bad configuration.  The 1-second sleep gives the TCP server time to
+    # bind before the robot starts.
+    health_task = asyncio.create_task(_run_health_server())
+    await asyncio.sleep(1)
+
+    try:
+        await _run_robot()
+    except SystemExit:
+        # Re-raise so Render sees a non-zero exit code and restarts the
+        # service automatically according to its restart policy.
+        raise
+    except Exception as exc:
+        print(f"[server] Unhandled robot exception: {exc}", flush=True)
+        sys.exit(1)
+    finally:
+        health_task.cancel()
+        try:
+            await health_task
+        except asyncio.CancelledError:
+            pass
 
 
 if __name__ == "__main__":

@@ -15,7 +15,7 @@
 # CRITICAL: Breaking API changes have occurred between major versions.
 # Do NOT upgrade without reading the MetaAPI changelog first.
 # Specifically verify: get_historical_candles(), terminal_state.positions interface.
-metaapi-cloud-sdk==27.0.2
+metaapi-cloud-sdk==27.0.3
 
 # ── Async HTTP — required by metaapi-cloud-sdk ────────────────────────────────
 aiohttp==3.9.5
