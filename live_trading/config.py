@@ -54,3 +54,11 @@ SLIPPAGE_POINTS      = int(os.getenv("SLIPPAGE_POINTS",        "30"))
 # ── Wyckoff Calibration (set at runtime from live candles) ───────────────────
 WYCKOFF_MAX_RANGE_PCT = 0.01163
 WYCKOFF_SPRING_MARGIN = 2.06
+
+# ── Redis IPC — cross-service state sharing on Render ─────────────────────────
+# Set to the Render Redis Internal URL (e.g. redis://red-xxxx:6379).
+# Without this, the robot and Telegram panel use file-based IPC, which does NOT
+# work across separate Render services (they have separate filesystems).
+# Add REDIS_URL to both the robot and panel service environment variables in
+# render.yaml or the Render dashboard.
+REDIS_URL = os.getenv("REDIS_URL", "")
