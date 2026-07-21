@@ -2,7 +2,7 @@ services:
   - type: web
     name: goldscalper-v4-robot
     runtime: python
-    plan: starter
+    plan: free
     healthCheckPath: /health
     buildCommand: pip install -r live_trading/requirements.txt
     startCommand: python live_trading/server.py
@@ -26,29 +26,25 @@ services:
       - key: PYTHON_VERSION
         value: "3.11.0"
       - key: STATE_FILE
-        value: "/data/robot_state.json"
+        value: "/tmp/robot_state.json"
       - key: MT5_SNAPSHOT
-        value: "/data/robot_mt5_snapshot.json"
+        value: "/tmp/robot_mt5_snapshot.json"
       - key: COMMANDS_FILE
-        value: "/data/robot_commands.json"
+        value: "/tmp/robot_commands.json"
       - key: GUARDIAN_STATE_FILE
-        value: "/data/guardian_state.json"
+        value: "/tmp/guardian_state.json"
       - key: LOG_FILE
-        value: "/data/robot.log"
+        value: "/tmp/robot.log"
       - key: REDIS_URL
         fromService:
           name: goldscalper-redis
           type: redis
           property: connectionString
-    disk:
-      name: robot-data
-      mountPath: /data
-      sizeGB: 1
 
   - type: web
     name: goldscalper-v4-panel
     runtime: python
-    plan: starter
+    plan: free
     healthCheckPath: /health
     buildCommand: pip install -r telegram_panel/requirements.txt
     startCommand: python telegram_panel/server.py
@@ -64,7 +60,7 @@ services:
       - key: PYTHON_VERSION
         value: "3.11.0"
       - key: PANEL_DB_PATH
-        value: "/data/panel.db"
+        value: "/tmp/panel.db"
       - key: LOG_LEVEL
         value: "INFO"
       - key: REDIS_URL
@@ -72,10 +68,6 @@ services:
           name: goldscalper-redis
           type: redis
           property: connectionString
-    disk:
-      name: panel-data
-      mountPath: /data
-      sizeGB: 1
 
   - type: redis
     name: goldscalper-redis
