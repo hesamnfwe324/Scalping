@@ -1,29 +1,21 @@
 # GoldScalperPro v4 — Live Trading Engine Dependencies
-# Exact version pins for reproducible, deterministic builds.
-# Update only after testing on a clean virtual environment.
-#
-# Install:
-#   pip install -r live_trading/requirements.txt
-#
-# Verify environment after install:
-#   python -c "import metaapi_cloud_sdk, aiohttp, aiofiles; print('OK')"
-#
-# Audit date: 2026-07-19 — pinned from latest stable at audit time.
-# Review and re-pin at minimum every 90 days.
+    # Exact version pins for reproducible, deterministic builds.
+    #
+    # Install:
+    #   pip install -r live_trading/requirements.txt
+    #
+    # Verify:
+    #   python -c "import aiohttp, aiofiles; print('OK')"
+    #
+    # Audit date: 2026-07-22
 
-# ── MetaAPI cloud SDK — bridges Python to MT5 on any OS ──────────────────────
-# CRITICAL: Breaking API changes have occurred between major versions.
-# Do NOT upgrade without reading the MetaAPI changelog first.
-# Specifically verify: get_historical_candles(), terminal_state.positions interface.
-metaapi-cloud-sdk==29.1.1
+    # ── Async HTTP — REST client for mtapi.io bridge ──────────────────────────────
+    aiohttp==3.9.5
 
-# ── Async HTTP — required by metaapi-cloud-sdk ────────────────────────────────
-aiohttp==3.9.5
+    # ── Async file writes — used for atomic state file updates ───────────────────
+    aiofiles==23.2.1
 
-# ── Async file writes — used for atomic state file updates ───────────────────
-aiofiles==23.2.1
-
-# ── Redis — cross-service IPC between robot and Telegram panel on Render ──────
-# Required when REDIS_URL is set (two separate Render services cannot share files).
-# Safe to install even without REDIS_URL — redis_ipc.py is a no-op when unconfigured.
-redis==5.2.1
+    # ── Redis — cross-service IPC between robot and Telegram panel on Render ──────
+    # Required when REDIS_URL is set (separate Render services cannot share files).
+    redis==5.2.1
+    
