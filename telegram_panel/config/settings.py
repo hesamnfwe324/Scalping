@@ -20,7 +20,9 @@ class TelegramSettings:
 
 @dataclass
 class DatabaseSettings:
-    path: str = "telegram_panel/storage/data/panel.db"
+    # Path is read from PANEL_DB_PATH env var so Render persistent disk path works.
+    # Defaults to project-relative path for local development.
+    path: str = os.getenv("PANEL_DB_PATH", "telegram_panel/storage/data/panel.db")
     echo: bool = False
     pool_size: int = 5
     max_overflow: int = 10

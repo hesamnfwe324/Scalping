@@ -179,6 +179,18 @@ class RobotService:
             logger.warning(f"Failed to read robot state file: {e}")
             return dict(_DEFAULT_STATE)
 
+    async def _read_state_redis(self) -> Optional[dict[str, Any]]:
+        """Read robot state from Redis (works across separate Render services)."""
+        try:
+            from telegram_panel.redis_ipc import redis_read_state as _redis_state, redis_available
+            if redis_available():
+                result = _redis_state()
+                if result is not None:
+                    return {**_DEFAULT_STATE, **result}
+        except Exception as exc:
+            logger.debug(f"Redis read_state failed: {exc}")
+        return None
+
     async def _read_state_http(self) -> dict[str, Any]:
         try:
             import aiohttp
@@ -196,9 +208,12 @@ class RobotService:
         self, command: str, payload: Optional[dict] = None
     ) -> bool:
         """
-        Write a command to the robot command inbox file.
-        The trading engine polls this file on each tick.
-        """
+        Write a command to the robot.
+        Tries Redis first (cross-service on Render), falls back to file IPC.
+        """        # Try Redis first — required when robot and panel are separate Render services
+        if await self._send_command_redis(command, payload):
+            return True
+        # Fall back to file IPC (single-machine / local deployments)
         cmd_entry = {
             "command": command,
             "payload": payload or {},
@@ -226,4 +241,17 @@ class RobotService:
             return True
         except Exception as e:
             logger.error(f"Failed to send command {command}: {e}")
+            return False
+
+    async def _send_command_redis(self, command: str, payload: Optional[dict] = None) -> bool:
+        """Write a command to Redis (works across separate Render services)."""
+        try:
+            from telegram_panel.redis_ipc import redis_send_command as _redis_cmd
+            ok = _redis_cmd(command, payload)
+            if ok:
+                self._cache_ts = None
+                logger.info(f"Sent command via Redis: {command}")
+            return ok
+        except Exception as exc:
+            logger.warning(f"Redis send_command failed: {exc}")
             return False

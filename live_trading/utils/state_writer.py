@@ -55,6 +55,15 @@ def _safe_write(path: str, data: dict) -> None:
         os.replace(tmp, path)
     except Exception as exc:
         log.error(f"State write failed ({path}): {exc}")
+    # Mirror to Redis for cross-service IPC on Render (no-op if REDIS_URL not set)
+    try:
+        from live_trading.redis_ipc import redis_write_state, redis_write_snapshot
+        if path == STATE_FILE:
+            redis_write_state(data)
+        elif path == SNAPSHOT_FILE:
+            redis_write_snapshot(data)
+    except Exception as exc:
+        log.debug(f"Redis mirror skipped ({path}): {exc}")
 
 
 # ── Write robot_state.json ────────────────────────────────────────────────────
@@ -164,6 +173,15 @@ def write_mt5_snapshot(
 # ── Read robot_commands.json ──────────────────────────────────────────────────
 
 def read_commands() -> dict:
+    # Try Redis first — works across separate Render services
+    try:
+        from live_trading.redis_ipc import redis_read_commands, redis_available
+        if redis_available():
+            result = redis_read_commands()
+            if result is not None:
+                return result
+    except Exception:
+        pass
     """Read commands written by Telegram panel.  Returns {} if none.
 
     Supports two on-disk formats:
@@ -226,6 +244,14 @@ def read_commands() -> dict:
 
 
 def clear_command(key: str) -> None:
+    # Clear from Redis too (cross-service IPC on Render)
+    try:
+        from live_trading.redis_ipc import redis_clear_command, redis_available
+        if redis_available():
+            redis_clear_command(key)
+    except Exception:
+        pass
+    # Also clear from file (local / single-machine deployments)
     cmds = read_commands()
     if key in cmds:
         del cmds[key]
