@@ -1,6 +1,10 @@
 """
 Heartbeat Monitor — watches robot health and fires events on state changes.
 Runs on a configurable interval. Never blocks trading.
+
+Fix: Periodic heartbeat notifications are ONLY sent when the robot is RUNNING.
+     When STOPPED/PAUSED/ERROR, only status-change events fire (once),
+     preventing spam every minute while the robot is offline.
 """
 
 import asyncio
@@ -17,7 +21,8 @@ logger = logging.getLogger(__name__)
 class HeartbeatMonitor:
     """
     Periodically checks robot state and emits events when status changes.
-    Also sends heartbeat notifications to configured admins.
+    Sends periodic heartbeat notifications ONLY while robot is RUNNING.
+    Status-change events (stopped, error, paused) fire once on transition.
     """
 
     def __init__(
@@ -25,7 +30,7 @@ class HeartbeatMonitor:
         robot_service: RobotService,
         event_bus: EventBus,
         interval_seconds: int = 30,
-        heartbeat_notify_interval: int = 60,
+        heartbeat_notify_interval: int = 600,  # 10 minutes — only while RUNNING
     ) -> None:
         self._robot = robot_service
         self._bus = event_bus
@@ -40,7 +45,7 @@ class HeartbeatMonitor:
     async def start(self) -> None:
         self._running = True
         self._task = asyncio.create_task(self._loop(), name="heartbeat_monitor")
-        logger.info(f"Heartbeat monitor started (interval: {self._interval}s)")
+        logger.info(f"Heartbeat monitor started (check interval: {self._interval}s, notify interval: {self._hb_interval}s)")
 
     async def stop(self) -> None:
         self._running = False
@@ -66,7 +71,7 @@ class HeartbeatMonitor:
         current_conn = await self._robot.get_connection_status()
         uptime = state.get("uptime_seconds", 0)
 
-        # Emit robot status change events
+        # ── Status change events (fire ONCE on each transition) ──────────────
         if self._last_status is not None and current_status != self._last_status:
             if current_status == RobotStatus.ERROR:
                 await self._bus.publish(Events.ROBOT_ERROR, {
@@ -75,12 +80,14 @@ class HeartbeatMonitor:
                 })
             elif current_status == RobotStatus.RUNNING and self._last_status != RobotStatus.RUNNING:
                 await self._bus.publish(Events.ROBOT_STARTED, {"status": current_status.value})
+                # Reset heartbeat timer so the first running-heartbeat fires after a full interval
+                self._last_hb_notify = datetime.utcnow()
             elif current_status == RobotStatus.STOPPED:
                 await self._bus.publish(Events.ROBOT_STOPPED, {"status": current_status.value})
             elif current_status == RobotStatus.PAUSED:
                 await self._bus.publish(Events.ROBOT_PAUSED, {"status": current_status.value})
 
-        # Emit connection change events
+        # ── Connection change events (fire ONCE on each transition) ──────────
         if self._last_connection is not None and current_conn != self._last_connection:
             if current_conn == ConnectionStatus.DISCONNECTED:
                 await self._bus.publish(Events.CONNECTION_LOST, {
@@ -92,17 +99,23 @@ class HeartbeatMonitor:
                     "current": current_conn.value,
                 })
 
-        # Heartbeat notification on interval
-        now = datetime.utcnow()
-        if self._last_hb_notify is None or (now - self._last_hb_notify).total_seconds() >= self._hb_interval:
-            await self._bus.publish(Events.HEARTBEAT, {
-                "status": current_status.value,
-                "uptime_seconds": uptime,
-                "connection": current_conn.value,
-                "timestamp": now.isoformat(),
-            })
-            self._last_hb_notify = now
+        # ── Periodic heartbeat — ONLY while robot is actively RUNNING ────────
+        # When STOPPED/PAUSED/ERROR: status-change events already notified the user.
+        # No need to spam every N seconds with a "still stopped" message.
+        if current_status == RobotStatus.RUNNING:
+            now = datetime.utcnow()
+            if (
+                self._last_hb_notify is None
+                or (now - self._last_hb_notify).total_seconds() >= self._hb_interval
+            ):
+                await self._bus.publish(Events.HEARTBEAT, {
+                    "status": current_status.value,
+                    "uptime_seconds": uptime,
+                    "connection": current_conn.value,
+                    "timestamp": now.isoformat(),
+                })
+                self._last_hb_notify = now
 
         self._last_status = current_status
         self._last_connection = current_conn
-        logger.debug(f"Heartbeat: status={current_status.value} conn={current_conn.value}")
+        logger.debug(f"Heartbeat check: status={current_status.value} conn={current_conn.value}")
