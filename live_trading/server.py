@@ -1,7 +1,15 @@
 """
-    Render free-tier web service wrapper — Live Trading Engine.
-    Runs a /health HTTP endpoint on $PORT alongside the trading engine.
-    Ping /health every 14 min (e.g. UptimeRobot free) to keep awake.
+    Render web-service wrapper — GoldScalperPro v4 Live Trading Engine.
+
+    Design:
+    • The aiohttp health server starts first and runs FOREVER — Render always
+      sees a healthy process.  The service is never restarted by Render;
+      the robot loop restarts internally with exponential backoff.
+    • The robot is restarted in-process on any failure (connection drop,
+      exception, or clean exit).  Backoff starts at 30 s and caps at 5 min.
+
+    Ping /health every 14 min (e.g. UptimeRobot free) to keep the free-tier
+    Render service warm and prevent the 15-minute sleep window.
     """
     import asyncio
     import os
@@ -19,15 +27,33 @@
 
     PORT = int(os.environ.get("PORT", 8080))
 
-    # How long (seconds) to keep the health server alive after startup before
-    # allowing the process to exit on a fatal error.  Render polls /health on a
-    # schedule; 30 s ensures at least 2-3 successful responses so the deploy is
-    # marked healthy before Render's restart policy takes over.
-    _HEALTH_GRACE_SECONDS = 30
+    # ── Robot restart backoff ─────────────────────────────────────────────────────
+    _BACKOFF_BASE    = 30   # first-failure wait (seconds)
+    _BACKOFF_MAX     = 300  # cap (5 minutes)
+    _backoff_seconds = _BACKOFF_BASE
+
+
+    def _reset_backoff() -> None:
+      global _backoff_seconds
+      _backoff_seconds = _BACKOFF_BASE
+
+
+    def _next_backoff() -> int:
+      global _backoff_seconds
+      wait = _backoff_seconds
+      _backoff_seconds = min(_backoff_seconds * 2, _BACKOFF_MAX)
+      return wait
+
+
+    # ── Health state ──────────────────────────────────────────────────────────────
+    _robot_status: str = "STARTING"
 
 
     async def _health(_req: web.Request) -> web.Response:
-      return web.Response(text="OK", content_type="text/plain")
+      return web.Response(
+          text=f"OK\nrobot_status={_robot_status}",
+          content_type="text/plain",
+      )
 
 
     async def _run_health_server() -> None:
@@ -39,79 +65,88 @@
       site = web.TCPSite(runner, "0.0.0.0", PORT)
       await site.start()
       print(f"[health] Listening on 0.0.0.0:{PORT}", flush=True)
+      # Run forever — this coroutine never returns.
       while True:
           await asyncio.sleep(3600)
 
 
-    async def _run_robot() -> None:
+    # ── Robot loop (restartable) ──────────────────────────────────────────────────
+
+    async def _run_robot_once() -> None:
+      """
+      Run one attempt of the trading engine.  Raises on failure so the outer
+      supervisor can log and schedule a restart.
+      """
+      global _robot_status
+
       from live_trading.config import MTAPI_URL, MT5_USER, MT5_PASSWORD
       from live_trading.logger import get_logger
       from live_trading.trading.live_loop import GoldScalperLive
 
       log = get_logger()
 
-      missing = []
-      if not MT5_USER:
-          missing.append("MT5_USER")
-      if not MT5_PASSWORD:
-          missing.append("MT5_PASSWORD")
-      if not MTAPI_URL:
-          missing.append("MTAPI_URL")
-
+      missing = [v for v, val in [("MT5_USER", MT5_USER), ("MT5_PASSWORD", MT5_PASSWORD), ("MTAPI_URL", MTAPI_URL)] if not val]
       if missing:
           for var in missing:
-              log.error(f"Environment variable {var} is not set.")
-          log.error("Set the missing variables in the Render dashboard → Environment.")
-          sys.exit(1)
+              log.error(f"Required env var {var!r} is not set.")
+          _robot_status = "CONFIG_ERROR"
+          raise RuntimeError(f"Missing env vars: {', '.join(missing)}")
 
       log.info(f"MTAPI_URL  : {MTAPI_URL}")
       log.info(f"MT5 user   : {MT5_USER}")
-      log.info("Starting GoldScalperPro Live Trading Engine...")
+      log.info("Starting GoldScalperPro v4 trading engine …")
+      _robot_status = "CONNECTING"
+
       engine = GoldScalperLive()
       connected = await engine.start()
+
       if connected is False:
-          log.error("Engine failed — exiting so Render restarts automatically.")
-          sys.exit(1)
+          _robot_status = "DISCONNECTED"
+          raise RuntimeError("Engine.start() returned False — MT5 connection failed.")
+
+      # start() returned a truthy value only if the trading loop exited cleanly
+      _robot_status = "STOPPED"
+
+
+    async def _robot_supervisor() -> None:
+      """
+      Continuously run the robot, restarting with exponential backoff on failure.
+      This coroutine never returns.
+      """
+      global _robot_status
+      attempt = 0
+      while True:
+          attempt += 1
+          print(f"[supervisor] Robot attempt #{attempt} …", flush=True)
+          try:
+              await _run_robot_once()
+              # Clean exit (unusual — the engine loop runs indefinitely)
+              print("[supervisor] Robot exited cleanly.", flush=True)
+              _reset_backoff()
+          except Exception as exc:
+              wait = _next_backoff()
+              print(
+                  f"[supervisor] Robot failed: {exc}. "
+                  f"Restarting in {wait}s …",
+                  flush=True,
+              )
+              _robot_status = f"RETRYING_IN_{wait}s"
+              await asyncio.sleep(wait)
 
 
     async def _main() -> None:
-      # Start the health server as a background task.  It must be able to
-      # respond to Render's health check polling BEFORE we exit for any reason
-      # (bad config, MT5 connection failure).  We hold the process alive for at
-      # least _HEALTH_GRACE_SECONDS so Render records several successful checks
-      # and marks the deploy healthy; its restart policy then handles re-launch.
+      # Start health server first — it must be accepting connections before
+      # Render's health-check fires.  asyncio.create_task schedules it to run
+      # on the event loop; the await below yields control so the server can
+      # bind its socket before we start the robot.
       health_task = asyncio.create_task(_run_health_server())
+      await asyncio.sleep(0.5)   # let the health server bind
+      print("[server] Health server ready.", flush=True)
 
-      # Give the TCP server time to bind before anything else runs.
-      await asyncio.sleep(1)
-      print("[server] Health server ready. Starting trading engine...", flush=True)
-
-      _exit_code = 0
-      try:
-          await _run_robot()
-      except SystemExit as exc:
-          _exit_code = exc.code if exc.code is not None else 1
-      except Exception as exc:
-          print(f"[server] Unhandled robot exception: {exc}", flush=True)
-          _exit_code = 1
-
-      if _exit_code != 0:
-          elapsed = 1  # already slept 1 s above
-          remaining = max(0, _HEALTH_GRACE_SECONDS - elapsed)
-          print(
-              f"[server] Engine exited (code {_exit_code}). "
-              f"Keeping health server alive for {remaining}s before exit.",
-              flush=True,
-          )
-          await asyncio.sleep(remaining)
-
-      health_task.cancel()
-      try:
-          await health_task
-      except asyncio.CancelledError:
-          pass
-
-      sys.exit(_exit_code)
+      # Run the supervisor as a second task.  Both tasks run concurrently and
+      # neither returns, so _main() itself never returns either.
+      supervisor_task = asyncio.create_task(_robot_supervisor())
+      await asyncio.gather(health_task, supervisor_task)
 
 
     if __name__ == "__main__":
