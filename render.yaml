@@ -1,48 +1,30 @@
 services:
-  # ── Live Trading Engine ──────────────────────────────────────────────────────
-  - type: worker               # background process — no port needed
+  - type: web
     name: goldscalper-v4-robot
     runtime: python
+    plan: free
+    healthCheckPath: /health
     buildCommand: pip install -r live_trading/requirements.txt
-    startCommand: python -m live_trading.main
+    startCommand: python live_trading/server.py
     envVars:
-      # ── MetaAPI credentials (set manually in Render dashboard) ──────────────
       - key: METAAPI_TOKEN
-        sync: false            # REQUIRED — from https://app.metaapi.cloud → API
+        sync: false
       - key: METAAPI_ACCOUNT_ID
-        sync: false            # REQUIRED — from https://app.metaapi.cloud → Accounts
-
-      # ── Trading parameters ───────────────────────────────────────────────────
+        sync: false
       - key: SYMBOL
         value: XAUUSD
       - key: RISK_PERCENT
         value: "1.0"
       - key: MIN_CONFIRMATIONS
         value: "3"
-
-      # ── Risk Guardian — circuit breakers ─────────────────────────────────────
-      # WARNING: These defaults are ACTIVE even if you do not set them explicitly.
-      # Review and set all three before deploying with real money.
       - key: DAILY_LOSS_LIMIT_PCT
-        value: "3.0"           # Halt if intraday PnL < -3% of session-open balance
+        value: "3.0"
       - key: MAX_DRAWDOWN_PCT
-        value: "8.0"           # Halt if equity drops 8% below session equity peak (sticky)
+        value: "8.0"
       - key: SLIPPAGE_POINTS
-        value: "30"            # Max fill deviation in broker points (30 ≈ $0.30 on XAUUSD)
-
-      # ── Python runtime ────────────────────────────────────────────────────────
+        value: "30"
       - key: PYTHON_VERSION
         value: "3.11.0"
-
-      # ── File paths (optional overrides) ──────────────────────────────────────
-      # NOTE: Render uses an EPHEMERAL filesystem. State files and logs are lost
-      # on every container restart. For production, attach a Render Persistent Disk
-      # and override these paths to point to the mounted volume.
-      # Example with persistent disk mounted at /data:
-      #   STATE_FILE: /data/robot_state.json
-      #   MT5_SNAPSHOT: /data/robot_mt5_snapshot.json
-      #   COMMANDS_FILE: /data/robot_commands.json
-      #   LOG_FILE: /data/robot.log
       - key: STATE_FILE
         value: "robot_state.json"
       - key: MT5_SNAPSHOT
@@ -52,51 +34,21 @@ services:
       - key: LOG_FILE
         value: "live_trading/robot.log"
 
-  # ── Telegram Control Panel ───────────────────────────────────────────────────
-  # The panel runs as a separate worker process and communicates with the robot
-  # via shared JSON state files.
-  # NOTE: Both services must share a Render Persistent Disk for state files to
-  # be visible across processes. Mount the disk at the same path on both services.
-  - type: worker
+  - type: web
     name: goldscalper-v4-panel
     runtime: python
+    plan: free
+    healthCheckPath: /health
     buildCommand: pip install -r telegram_panel/requirements.txt
-    startCommand: python -m telegram_panel.main
+    startCommand: python telegram_panel/server.py
     envVars:
-      # ── Telegram credentials (set manually in Render dashboard) ──────────────
       - key: TELEGRAM_BOT_TOKEN
-        sync: false            # REQUIRED — from @BotFather on Telegram
+        sync: false
       - key: TELEGRAM_OWNER_ID
-        sync: false            # REQUIRED — your Telegram numeric user ID
-
-      # ── Encryption — MANDATORY for production ────────────────────────────────
-      # Generate key: python -m telegram_panel.main --generate-key
-      # Panel will refuse to start if this is not set.
+        sync: false
       - key: PANEL_ENCRYPTION_KEY
-        sync: false            # REQUIRED — Fernet key for credential encryption
-
-      # ── Optional admin IDs ────────────────────────────────────────────────────
+        sync: false
       - key: TELEGRAM_ADMIN_IDS
-        value: ""              # Comma-separated Telegram IDs for secondary admins
-
-      # ── Database path ─────────────────────────────────────────────────────────
-      # Override to persistent disk path in production:
-      #   PANEL_DB_PATH: /data/panel.db
-      - key: PANEL_DB_PATH
-        value: "telegram_panel/storage/data/panel.db"
-
-      # ── Robot state file paths (must match robot service paths) ───────────────
-      - key: ROBOT_STATE_PATH
-        value: "robot_state.json"
-      - key: ROBOT_LOG_PATH
-        value: "live_trading/robot.log"
-
-      # ── Log configuration ──────────────────────────────────────────────────────
-      - key: LOG_LEVEL
-        value: "INFO"
-      - key: PANEL_LOG_PATH
-        value: "telegram_panel/storage/data/logs/panel.log"
-
-      # ── Python runtime ─────────────────────────────────────────────────────────
+        value: ""
       - key: PYTHON_VERSION
         value: "3.11.0"
