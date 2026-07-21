@@ -1,0 +1,197 @@
+"""
+Redis IPC — GoldScalperPro v4
+
+Cross-service state sharing between the trading robot and the Telegram panel
+when both run as separate Render services (separate filesystems).
+
+When REDIS_URL is set:
+  - Robot writes state to Redis; panel reads state from Redis.
+  - Panel writes commands to Redis; robot reads commands from Redis.
+
+When REDIS_URL is not set or Redis is unreachable:
+  - All functions return None/False silently.
+  - Callers automatically fall back to file-based IPC.
+
+Redis keys
+  goldscalper:state    — robot state JSON (TTL 5 min)
+  goldscalper:snapshot — MT5 snapshot JSON (TTL 5 min)
+  goldscalper:commands — pending commands dict in engine-key format (TTL 5 min)
+"""
+
+import json
+import logging
+import os
+from typing import Optional
+
+logger = logging.getLogger(__name__)
+
+REDIS_URL = os.getenv("REDIS_URL", "")
+
+_STATE_KEY    = "goldscalper:state"
+_SNAPSHOT_KEY = "goldscalper:snapshot"
+_COMMANDS_KEY = "goldscalper:commands"
+_STATE_TTL    = 300   # 5 min — prevents stale reads if robot crashes
+_CMD_TTL      = 300   # 5 min — stale commands become irrelevant
+
+_client       = None
+_unavailable  = False  # avoid retrying after first connection failure
+
+
+def _get_client():
+    global _client, _unavailable
+    if _unavailable:
+        return None
+    if _client is not None:
+        return _client
+    if not REDIS_URL:
+        return None
+    try:
+        import redis as _redis_lib
+        c = _redis_lib.from_url(
+            REDIS_URL,
+            decode_responses=True,
+            socket_connect_timeout=3,
+            socket_timeout=3,
+        )
+        c.ping()
+        _client = c
+        logger.info("Redis IPC: connected")
+        return _client
+    except Exception as exc:
+        logger.warning("Redis IPC unavailable — file fallback active: %s", exc)
+        _unavailable = True
+        return None
+
+
+def redis_available() -> bool:
+    """True when Redis is configured and reachable."""
+    return _get_client() is not None
+
+
+# ─── Robot writes state to Redis ──────────────────────────────────────────────
+
+def redis_write_state(data: dict) -> bool:
+    r = _get_client()
+    if r is None:
+        return False
+    try:
+        r.set(_STATE_KEY, json.dumps(data, default=str), ex=_STATE_TTL)
+        return True
+    except Exception as exc:
+        logger.warning("Redis write_state: %s", exc)
+        return False
+
+
+def redis_write_snapshot(data: dict) -> bool:
+    r = _get_client()
+    if r is None:
+        return False
+    try:
+        r.set(_SNAPSHOT_KEY, json.dumps(data, default=str), ex=_STATE_TTL)
+        return True
+    except Exception as exc:
+        logger.warning("Redis write_snapshot: %s", exc)
+        return False
+
+
+# ─── Robot reads commands from Redis ──────────────────────────────────────────
+
+def redis_read_commands() -> Optional[dict]:
+    """
+    Return pending commands dict (engine-key format) or None if unavailable.
+    Returns {} when Redis is reachable but no commands are queued.
+    """
+    r = _get_client()
+    if r is None:
+        return None
+    try:
+        raw = r.get(_COMMANDS_KEY)
+        if not raw:
+            return {}
+        return json.loads(raw)
+    except Exception as exc:
+        logger.warning("Redis read_commands: %s", exc)
+        return None
+
+
+def redis_clear_command(key: str) -> bool:
+    """Remove one engine-key from the Redis command dict."""
+    r = _get_client()
+    if r is None:
+        return False
+    try:
+        raw = r.get(_COMMANDS_KEY)
+        if raw:
+            cmds = json.loads(raw)
+            if key in cmds:
+                cmds.pop(key)
+                r.set(_COMMANDS_KEY, json.dumps(cmds), ex=_CMD_TTL)
+        return True
+    except Exception as exc:
+        logger.warning("Redis clear_command: %s", exc)
+        return False
+
+
+# ─── Panel reads state from Redis ─────────────────────────────────────────────
+
+def redis_read_state() -> Optional[dict]:
+    r = _get_client()
+    if r is None:
+        return None
+    try:
+        raw = r.get(_STATE_KEY)
+        return json.loads(raw) if raw else None
+    except Exception as exc:
+        logger.warning("Redis read_state: %s", exc)
+        return None
+
+
+def redis_read_snapshot() -> Optional[dict]:
+    r = _get_client()
+    if r is None:
+        return None
+    try:
+        raw = r.get(_SNAPSHOT_KEY)
+        return json.loads(raw) if raw else None
+    except Exception as exc:
+        logger.warning("Redis read_snapshot: %s", exc)
+        return None
+
+
+# ─── Panel writes commands to Redis ───────────────────────────────────────────
+
+# Translate Telegram panel command names -> engine dict keys
+_PANEL_COMMAND_MAP: dict = {
+    "PAUSE":          "pause",
+    "RESUME":         "resume",
+    "EMERGENCY_STOP": "stop",
+    "SAFE_SHUTDOWN":  "stop",
+    "CLOSE_ALL":      "close_all",
+    "RESET_GUARDIAN": "reset_guardian",
+    "START":          "start",
+    "RESTART_ENGINE": "restart_engine",
+}
+
+
+def redis_send_command(command: str, payload: Optional[dict] = None) -> bool:
+    """
+    Write a command to Redis (called by Telegram panel).
+    Translates panel command name -> engine key and merges into command dict.
+    Returns True if written, False if Redis is unavailable.
+    """
+    r = _get_client()
+    if r is None:
+        return False
+    try:
+        engine_key = _PANEL_COMMAND_MAP.get(
+            command.strip().upper(), command.strip().lower()
+        )
+        raw = r.get(_COMMANDS_KEY)
+        cmds = json.loads(raw) if raw else {}
+        cmds[engine_key] = True
+        r.set(_COMMANDS_KEY, json.dumps(cmds), ex=_CMD_TTL)
+        logger.info("Redis sent command: %s -> %s", command, engine_key)
+        return True
+    except Exception as exc:
+        logger.warning("Redis send_command: %s", exc)
+        return False
