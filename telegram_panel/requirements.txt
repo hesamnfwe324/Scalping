@@ -33,3 +33,8 @@ aiohttp==3.9.5
 # ── Python version requirement ─────────────────────────────────────────────────
 # Python >= 3.11 required (uses 3.10+ type hint syntax)
 # Python 3.12 compatible (datetime.utcnow() deprecation fixed in panel code)
+
+# ── Redis — cross-service IPC between robot and Telegram panel on Render ──────
+# Required when REDIS_URL is set (two separate Render services cannot share files).
+# Safe to install even without REDIS_URL — redis_ipc.py is a no-op when unconfigured.
+redis==5.2.1
