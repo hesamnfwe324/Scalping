@@ -190,7 +190,7 @@ class BotApplication:
             robot_service=robot_svc,
             event_bus=self._event_bus,
             interval_seconds=self._settings.robot.heartbeat_interval_seconds,
-            heartbeat_notify_interval=60,
+            heartbeat_notify_interval=self._settings.notifications.heartbeat_interval_seconds,
         )
         await self._heartbeat.start()
 
