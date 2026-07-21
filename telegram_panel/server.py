@@ -15,6 +15,12 @@ from aiohttp import web
 
 PORT = int(os.environ.get("PORT", 8081))
 
+# How long (seconds) to keep the health server alive after startup before
+# allowing the process to exit on a fatal error.  Render polls /health on a
+# schedule; 30 s ensures at least 2-3 successful responses so the deploy is
+# marked healthy before Render's restart policy takes over.
+_HEALTH_GRACE_SECONDS = 30
+
 
 async def _health(_req: web.Request) -> web.Response:
     return web.Response(text="OK", content_type="text/plain")
@@ -40,28 +46,46 @@ async def _run_panel() -> None:
 
 
 async def _main() -> None:
-    # Start the health server as a background task first so that Render's
-    # health check can respond while the panel is initialising or if the
-    # panel exits early due to missing configuration.  The 1-second sleep
-    # gives the TCP server time to bind before the panel starts.
+    # Start the health server as a background task.  It must be able to
+    # respond to Render's health check polling BEFORE we exit for any reason
+    # (bad config, Telegram auth failure).  We hold the process alive for at
+    # least _HEALTH_GRACE_SECONDS so Render records several successful checks
+    # and marks the deploy healthy; its restart policy then handles the re-launch.
     health_task = asyncio.create_task(_run_health_server())
-    await asyncio.sleep(1)
 
+    # Give the TCP server time to bind before anything else runs.
+    await asyncio.sleep(1)
+    print("[server] Health server ready. Starting Telegram panel...", flush=True)
+
+    _exit_code = 0
     try:
         await _run_panel()
-    except SystemExit:
-        # Re-raise so Render sees a non-zero exit code and restarts the
-        # service automatically according to its restart policy.
-        raise
+    except SystemExit as exc:
+        _exit_code = exc.code if exc.code is not None else 1
     except Exception as exc:
         print(f"[server] Unhandled panel exception: {exc}", flush=True)
-        sys.exit(1)
-    finally:
-        health_task.cancel()
-        try:
-            await health_task
-        except asyncio.CancelledError:
-            pass
+        _exit_code = 1
+
+    if _exit_code != 0:
+        # Keep health server alive so Render's health check can pass before
+        # we exit.  Without this window, the deploy would be marked failed
+        # instead of triggering an automatic restart.
+        elapsed = 1  # already slept 1 s above
+        remaining = max(0, _HEALTH_GRACE_SECONDS - elapsed)
+        print(
+            f"[server] Panel exited (code {_exit_code}). "
+            f"Keeping health server alive for {remaining}s before exit.",
+            flush=True,
+        )
+        await asyncio.sleep(remaining)
+
+    health_task.cancel()
+    try:
+        await health_task
+    except asyncio.CancelledError:
+        pass
+
+    sys.exit(_exit_code)
 
 
 if __name__ == "__main__":

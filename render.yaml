@@ -36,10 +36,7 @@ services:
       - key: LOG_FILE
         value: "/tmp/robot.log"
       - key: REDIS_URL
-        fromService:
-          name: goldscalper-redis
-          type: redis
-          property: connectionString
+        value: ""
 
   - type: web
     name: goldscalper-v4-panel
@@ -64,13 +61,4 @@ services:
       - key: LOG_LEVEL
         value: "INFO"
       - key: REDIS_URL
-        fromService:
-          name: goldscalper-redis
-          type: redis
-          property: connectionString
-
-  - type: redis
-    name: goldscalper-redis
-    plan: free
-    maxmemoryPolicy: noeviction
-    ipAllowList: []
+        value: ""
