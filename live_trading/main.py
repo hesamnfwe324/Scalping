@@ -1,12 +1,16 @@
 """
-GoldScalperPro v4 — Live Trading Entry Point (MetaAPI / Linux-compatible)
+GoldScalperPro v4 — Live Trading Entry Point (mtapi.io / Linux-compatible)
 
 Usage:
     python -m live_trading.main
 
 Required environment variables:
-    METAAPI_TOKEN       — from https://app.metaapi.cloud → API
-    METAAPI_ACCOUNT_ID  — from https://app.metaapi.cloud → Accounts
+    MTAPI_URL      — URL of your mtapi Docker instance on Render
+                     (e.g. https://goldscalper-mtapi.onrender.com)
+    MT5_HOST       — broker server name (e.g. AMarkets-Demo)
+    MT5_PORT       — usually 443
+    MT5_USER       — MT5 account login number
+    MT5_PASSWORD   — MT5 account password
 
 Optional:
     SYMBOL              — default: XAUUSD
@@ -20,50 +24,50 @@ import asyncio
 import sys
 import os
 
-# Python version guard — 3.11+ required for asyncio stability and timezone support.
-# 3.10 is insufficient: asyncio.Runner not yet available; utcnow deprecation not patched.
 if sys.version_info < (3, 11):
     print(
-        f"ERROR: GoldScalperPro requires Python 3.11 or higher. "
-        f"You are running Python {sys.version_info.major}.{sys.version_info.minor}."
+        f"ERROR: GoldScalperPro requires Python 3.11+. "
+        f"Running Python {sys.version_info.major}.{sys.version_info.minor}."
     )
     sys.exit(1)
 
-# Allow  python main.py  from inside live_trading/
 if __name__ == "__main__" and __package__ is None:
     _root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     if _root not in sys.path:
         sys.path.insert(0, _root)
 
 from live_trading.logger import get_logger
-from live_trading.config import METAAPI_TOKEN, METAAPI_ACCOUNT_ID
+from live_trading.config import MTAPI_URL, MT5_USER, MT5_PASSWORD, MT5_HOST
 from live_trading.trading.live_loop import GoldScalperLive
 
 log = get_logger()
 
 
 async def _main() -> None:
-    if not METAAPI_TOKEN:
-        log.error("MetaAPI credentials are not configured.")
-        log.error("Set METAAPI_TOKEN and METAAPI_ACCOUNT_ID environment variables.")
-        log.error("Get credentials from: https://app.metaapi.cloud")
+    missing = []
+    if not MT5_USER:
+        missing.append("MT5_USER")
+    if not MT5_PASSWORD:
+        missing.append("MT5_PASSWORD")
+    if not MTAPI_URL:
+        missing.append("MTAPI_URL")
+
+    if missing:
+        for var in missing:
+            log.error(f"Environment variable {var} is not set.")
+        log.error(f"MT5 broker: {MT5_HOST} | mtapi URL: {MTAPI_URL}")
+        log.error("Set the missing variables in the Render dashboard → Environment.")
         sys.exit(1)
-    if not METAAPI_ACCOUNT_ID:
-        log.error("MetaAPI credentials are not configured.")
-        log.error("Set METAAPI_TOKEN and METAAPI_ACCOUNT_ID environment variables.")
-        log.error("Get credentials from: https://app.metaapi.cloud")
-        sys.exit(1)
+
+    log.info(f"MT5 broker : {MT5_HOST}:{os.getenv('MT5_PORT', '443')}")
+    log.info(f"MT5 user   : {MT5_USER}")
+    log.info(f"mtapi URL  : {MTAPI_URL}")
 
     engine = GoldScalperLive()
     connected = await engine.start()
 
-    # If start() returned False (MetaAPI connection failure), exit with non-zero
-    # code so Render / supervisor / systemd will auto-restart the process.
     if connected is False:
-        log.error(
-            "Engine failed to connect to MetaAPI. "
-            "Exiting with error code 1 so the process manager can restart."
-        )
+        log.error("Engine failed to connect to MT5. Exiting so process manager can restart.")
         sys.exit(1)
 
 
