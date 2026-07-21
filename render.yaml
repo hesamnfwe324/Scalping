@@ -2,7 +2,7 @@ services:
   - type: web
     name: goldscalper-v4-robot
     runtime: python
-    plan: free
+    plan: starter
     healthCheckPath: /health
     buildCommand: pip install -r live_trading/requirements.txt
     startCommand: python live_trading/server.py
@@ -26,18 +26,29 @@ services:
       - key: PYTHON_VERSION
         value: "3.11.0"
       - key: STATE_FILE
-        value: "robot_state.json"
+        value: "/data/robot_state.json"
       - key: MT5_SNAPSHOT
-        value: "robot_mt5_snapshot.json"
+        value: "/data/robot_mt5_snapshot.json"
       - key: COMMANDS_FILE
-        value: "robot_commands.json"
+        value: "/data/robot_commands.json"
+      - key: GUARDIAN_STATE_FILE
+        value: "/data/guardian_state.json"
       - key: LOG_FILE
-        value: "live_trading/robot.log"
+        value: "/data/robot.log"
+      - key: REDIS_URL
+        fromService:
+          name: goldscalper-redis
+          type: redis
+          property: connectionString
+    disk:
+      name: robot-data
+      mountPath: /data
+      sizeGB: 1
 
   - type: web
     name: goldscalper-v4-panel
     runtime: python
-    plan: free
+    plan: starter
     healthCheckPath: /health
     buildCommand: pip install -r telegram_panel/requirements.txt
     startCommand: python telegram_panel/server.py
@@ -52,3 +63,22 @@ services:
         value: ""
       - key: PYTHON_VERSION
         value: "3.11.0"
+      - key: PANEL_DB_PATH
+        value: "/data/panel.db"
+      - key: LOG_LEVEL
+        value: "INFO"
+      - key: REDIS_URL
+        fromService:
+          name: goldscalper-redis
+          type: redis
+          property: connectionString
+    disk:
+      name: panel-data
+      mountPath: /data
+      sizeGB: 1
+
+  - type: redis
+    name: goldscalper-redis
+    plan: free
+    maxmemoryPolicy: noeviction
+    ipAllowList: []
