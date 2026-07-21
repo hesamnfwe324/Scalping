@@ -1,0 +1,24 @@
+# GoldScalperPro v4 — Live Trading Engine Dependencies
+# Exact version pins for reproducible, deterministic builds.
+# Update only after testing on a clean virtual environment.
+#
+# Install:
+#   pip install -r live_trading/requirements.txt
+#
+# Verify environment after install:
+#   python -c "import metaapi_cloud_sdk, aiohttp, aiofiles; print('OK')"
+#
+# Audit date: 2026-07-19 — pinned from latest stable at audit time.
+# Review and re-pin at minimum every 90 days.
+
+# ── MetaAPI cloud SDK — bridges Python to MT5 on any OS ──────────────────────
+# CRITICAL: Breaking API changes have occurred between major versions.
+# Do NOT upgrade without reading the MetaAPI changelog first.
+# Specifically verify: get_historical_candles(), terminal_state.positions interface.
+metaapi-cloud-sdk==27.0.2
+
+# ── Async HTTP — required by metaapi-cloud-sdk ────────────────────────────────
+aiohttp==3.9.5
+
+# ── Async file writes — used for atomic state file updates ───────────────────
+aiofiles==23.2.1

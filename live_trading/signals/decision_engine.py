@@ -1,0 +1,219 @@
+"""
+Decision Engine — Central orchestrator of all 7 signal engines.
+Ported from decisionEngine.ts
+"""
+from dataclasses import dataclass, field
+from typing import List, Literal, Optional
+from live_trading.signals.gold_engine import OHLCV
+from live_trading.signals.smc_engine import SmcResult, analyze_smc_structure
+from live_trading.signals.wyckoff_engine import WyckoffResult, analyze_wyckoff
+from live_trading.signals.price_action_engine import PriceActionResult, analyze_price_action
+from live_trading.signals.trend_engine import TrendResult, analyze_trend
+from live_trading.signals.market_regime import RegimeResult, RegimeEntryRules, detect_market_regime
+from live_trading.signals.confidence_engine import ConfidenceResult, ConfidenceComponents, calc_confidence
+from live_trading.signals.quality_filter import QualityFilterResult, apply_quality_filter, get_session_quality
+from live_trading.signals.entry_filter import apply_entry_filter
+from live_trading.risk.capital_manager import CapitalInput, CapitalOutput, calc_trade_parameters
+
+CONF_HARD_MIN  = 70.0
+CONF_MARGINAL_RR = 1.5
+
+
+@dataclass
+class DecisionResult:
+    allowed:         bool
+    direction:       Literal["BUY", "SELL", "NEUTRAL"]
+    confidence:      float
+    components:      ConfidenceComponents
+    grade:           str
+    regime:          str
+    regime_label:    str
+    regime_rules:    RegimeEntryRules
+    quality_filter:  QualityFilterResult
+    blocked_reasons: List[str]
+    reasoning:       List[str]
+    trade_params:    Optional[CapitalOutput]
+    smc:    SmcResult
+    wyckoff: WyckoffResult
+    pa:     PriceActionResult
+    trend:  TrendResult
+
+
+def _candidate_direction(smc: SmcResult) -> str:
+    if smc.choch_signals:
+        return smc.choch_signals[-1].type
+    if smc.bos_signals:
+        return smc.bos_signals[-1].type
+    if smc.trend == "BULLISH": return "BUY"
+    if smc.trend == "BEARISH": return "SELL"
+    return "NEUTRAL"
+
+
+def _make_neutral(smc, wyckoff, pa, trend, blocked_reasons, reasoning=None) -> DecisionResult:
+    from live_trading.signals.market_regime import REGIME_RULES
+    rules = REGIME_RULES["RANGE"]
+    return DecisionResult(
+        allowed=False, direction="NEUTRAL", confidence=0.0,
+        components=ConfidenceComponents(0,0,0,0,0,0,0),
+        grade="REJECTED", regime="RANGE", regime_label="No Signal",
+        regime_rules=rules,
+        quality_filter=QualityFilterResult(
+            allowed=False, blocked_reasons=blocked_reasons,
+            session_quality="BLOCKED", adx=0.0,
+            is_severe_range=False, is_late_entry=False,
+            is_low_probability=False, is_fake_breakout=False,
+            is_weak_volume=False, is_low_momentum=False,
+        ),
+        blocked_reasons=blocked_reasons,
+        reasoning=reasoning or [],
+        trade_params=None,
+        smc=smc, wyckoff=wyckoff, pa=pa, trend=trend,
+    )
+
+
+def run_decision_engine(
+    candles:        List[OHLCV],
+    account_balance: float,
+    risk_percent:   float = 1.0,
+    min_confirmations: int = 3,
+    use_atr_high_vol: bool = False,
+) -> DecisionResult:
+
+    smc     = analyze_smc_structure(candles)
+    wyckoff = analyze_wyckoff(candles)
+    pa      = analyze_price_action(candles)
+    trend   = analyze_trend(candles)
+
+    candidate = _candidate_direction(smc)
+    if candidate == "NEUTRAL":
+        return _make_neutral(smc, wyckoff, pa, trend, ["No SMC signal"])
+
+    # Hard EMA gate
+    trend_dir = ("BUY" if trend.trend == "BULLISH" else
+                 "SELL" if trend.trend == "BEARISH" else "NEUTRAL")
+    if (candidate == "BUY" and trend_dir == "SELL") or \
+       (candidate == "SELL" and trend_dir == "BUY"):
+        reason = f"EMA trend ({trend.trend}) opposes SMC ({candidate})"
+        return _make_neutral(smc, wyckoff, pa, trend, [reason], [reason])
+
+    # Entry filter — minimum N-of-4 vote gate (SMC always required)
+    ef = apply_entry_filter(
+        smc_signal      = candidate,
+        ema_trend       = trend.trend,
+        pa_signal       = pa.pa_signal,
+        wyckoff_signal  = wyckoff.wyckoff_signal,
+        min_confirmations = min_confirmations,
+    )
+    if not ef.allowed:
+        votes = (f"SMC={'✓' if ef.smc else '✗'}  "
+                 f"Trend={'✓' if ef.trend else '✗'}  "
+                 f"PA={'✓' if ef.price_action else '✗'}  "
+                 f"Wyckoff={'✓' if ef.wyckoff else '✗'}")
+        reason = (f"Entry filter: only {ef.confirmation_count}/{min_confirmations} "
+                  f"confirmations — {votes}")
+        return _make_neutral(smc, wyckoff, pa, trend, [reason], [reason])
+
+    regime = detect_market_regime(candles, trend, wyckoff, use_atr_high_vol)
+
+    if candidate == "BUY"  and not regime.rules.allow_long:
+        return _make_neutral(smc, wyckoff, pa, trend,
+                             [f'Regime "{regime.rules.label}" does not allow LONG'])
+    if candidate == "SELL" and not regime.rules.allow_short:
+        return _make_neutral(smc, wyckoff, pa, trend,
+                             [f'Regime "{regime.rules.label}" does not allow SHORT'])
+
+    last_candle  = candles[-1]
+    session      = get_session_quality(last_candle.time)
+    conf_result  = calc_confidence(smc, wyckoff, pa, trend, regime, session, candidate)
+
+    if conf_result.confidence < CONF_HARD_MIN:
+        n = DecisionResult(
+            allowed=False, direction=candidate,  # type: ignore
+            confidence=conf_result.confidence, components=conf_result.components,
+            grade="REJECTED", regime=regime.regime, regime_label=regime.rules.label,
+            regime_rules=regime.rules,
+            quality_filter=QualityFilterResult(
+                False, [f"Confidence {conf_result.confidence:.1f}% < {CONF_HARD_MIN}% minimum"],
+                session, regime.adx, False, False, True, False, False, False),
+            blocked_reasons=[f"Confidence {conf_result.confidence:.1f}% < {CONF_HARD_MIN}%"],
+            reasoning=conf_result.reasoning, trade_params=None,
+            smc=smc, wyckoff=wyckoff, pa=pa, trend=trend,
+        )
+        return n
+
+    last_bos = smc.bos_signals[-1].bar_index if smc.bos_signals else None
+    quality  = apply_quality_filter(candles, candidate, conf_result.confidence,
+                                    last_bos, regime.adx, regime.atr_ratio)
+    if not quality.allowed:
+        return DecisionResult(
+            allowed=False, direction=candidate,  # type: ignore
+            confidence=conf_result.confidence, components=conf_result.components,
+            grade=conf_result.grade, regime=regime.regime, regime_label=regime.rules.label,
+            regime_rules=regime.rules, quality_filter=quality,
+            blocked_reasons=quality.blocked_reasons, reasoning=conf_result.reasoning,
+            trade_params=None, smc=smc, wyckoff=wyckoff, pa=pa, trend=trend,
+        )
+
+    # Capital manager inputs
+    aligned_obs = [ob for ob in smc.order_blocks
+                   if ob.type == ("BULLISH" if candidate == "BUY" else "BEARISH")]
+    latest_ob = aligned_obs[-1] if aligned_obs else None
+
+    swing_highs = [b.price for b in smc.bos_signals if b.type == "BUY"]
+    swing_lows  = [b.price for b in smc.bos_signals if b.type == "SELL"]
+
+    cap_input = CapitalInput(
+        direction=candidate,
+        entry_price=last_candle.close,
+        atr=regime.atr,
+        account_balance=account_balance,
+        risk_percent=risk_percent,
+        order_block_top=latest_ob.high if latest_ob else None,
+        order_block_bottom=latest_ob.low if latest_ob else None,
+        swing_high=max(swing_highs) if swing_highs else None,
+        swing_low=min(swing_lows)   if swing_lows  else None,
+    )
+    trade_params = calc_trade_parameters(cap_input)
+
+    # Marginal confidence check
+    min_conf = regime.rules.min_confidence
+    if conf_result.confidence < min_conf:
+        if trade_params.risk_reward_ratio < CONF_MARGINAL_RR:
+            return DecisionResult(
+                allowed=False, direction=candidate,  # type: ignore
+                confidence=conf_result.confidence, components=conf_result.components,
+                grade="MARGINAL", regime=regime.regime, regime_label=regime.rules.label,
+                regime_rules=regime.rules, quality_filter=quality,
+                blocked_reasons=[
+                    f"Marginal conf {conf_result.confidence:.1f}% requires R:R ≥ {CONF_MARGINAL_RR} "
+                    f"(got {trade_params.risk_reward_ratio:.2f})"
+                ],
+                reasoning=conf_result.reasoning, trade_params=None,
+                smc=smc, wyckoff=wyckoff, pa=pa, trend=trend,
+            )
+
+    # R:R gate
+    if trade_params.risk_reward_ratio < regime.rules.min_rr:
+        return DecisionResult(
+            allowed=False, direction=candidate,  # type: ignore
+            confidence=conf_result.confidence, components=conf_result.components,
+            grade=conf_result.grade, regime=regime.regime, regime_label=regime.rules.label,
+            regime_rules=regime.rules, quality_filter=quality,
+            blocked_reasons=[
+                f"R:R {trade_params.risk_reward_ratio:.2f} < {regime.rules.min_rr} "
+                f"minimum for {regime.rules.label}"
+            ],
+            reasoning=conf_result.reasoning, trade_params=None,
+            smc=smc, wyckoff=wyckoff, pa=pa, trend=trend,
+        )
+
+    # ── TRADE ALLOWED ─────────────────────────────────────────────────────────
+    return DecisionResult(
+        allowed=True, direction=candidate,  # type: ignore
+        confidence=conf_result.confidence, components=conf_result.components,
+        grade=conf_result.grade, regime=regime.regime, regime_label=regime.rules.label,
+        regime_rules=regime.rules, quality_filter=quality,
+        blocked_reasons=[], reasoning=conf_result.reasoning,
+        trade_params=trade_params,
+        smc=smc, wyckoff=wyckoff, pa=pa, trend=trend,
+    )
