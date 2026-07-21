@@ -59,7 +59,7 @@ class MT5Settings:
 
 @dataclass
 class NotificationSettings:
-    heartbeat_interval_seconds: int = 60
+    heartbeat_interval_seconds: int = 600
     max_queue_size: int = 1000
     retry_attempts: int = 3
     retry_delay_seconds: float = 2.0
