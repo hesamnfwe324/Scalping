@@ -167,7 +167,30 @@ class MT5Service:
         if self._cache_ts and (now - self._cache_ts) < self._cache_ttl:
             return self._cache
 
+        # Try Redis first — works across separate Render services.
+        # Without REDIS_URL this is a no-op and falls through to file reads.
+        redis_data = self._read_from_redis()
+        if redis_data:
+            self._cache = redis_data
+            self._cache_ts = now
+            return self._cache
+
         if not os.path.exists(self._snapshot_path):
+            # Also try the robot state file (has account balance data)
+            state_path = self._snapshot_path.replace("mt5_snapshot", "state")
+            if os.path.exists(state_path):
+                try:
+                    loop = asyncio.get_event_loop()
+                    def _read_state():
+                        with open(state_path) as f:
+                            return json.load(f)
+                    state_data = await loop.run_in_executor(None, _read_state)
+                    data = self._normalize_state_to_snapshot(state_data)
+                    self._cache = data
+                    self._cache_ts = now
+                    return data
+                except Exception:
+                    pass
             return {}
         try:
             loop = asyncio.get_event_loop()
@@ -175,9 +198,68 @@ class MT5Service:
                 with open(self._snapshot_path) as f:
                     return json.load(f)
             data = await loop.run_in_executor(None, _read)
+            # If snapshot lacks account_info, try merging from state file
+            if "account_info" not in data:
+                state_path = self._snapshot_path.replace("mt5_snapshot", "state")
+                if os.path.exists(state_path):
+                    try:
+                        with open(state_path) as f:
+                            state_data = json.load(f)
+                        data.update(self._normalize_state_to_snapshot(state_data))
+                    except Exception:
+                        pass
             self._cache = data
             self._cache_ts = now
             return data
         except Exception as e:
             logger.warning(f"Failed to read MT5 snapshot: {e}")
             return {}
+
+    def _read_from_redis(self) -> dict[str, Any]:
+        """Try Redis snapshot key, fall back to Redis state key. Returns {} if Redis unavailable."""
+        try:
+            from telegram_panel.redis_ipc import (
+                redis_read_snapshot, redis_read_state, redis_available,
+            )
+            if not redis_available():
+                return {}
+            # Snapshot key — written by live_trading per bar
+            snap = redis_read_snapshot()
+            if snap and "account_info" in snap:
+                return snap
+            # State key — has account balance / equity written every bar
+            state = redis_read_state()
+            if state:
+                merged = self._normalize_state_to_snapshot(state)
+                if snap:
+                    # Preserve market data fields from snapshot
+                    snap.update(merged)
+                    return snap
+                return merged
+            return snap or {}
+        except Exception as e:
+            logger.debug(f"Redis snapshot read failed: {e}")
+            return {}
+
+    @staticmethod
+    def _normalize_state_to_snapshot(state: dict) -> dict:
+        """Convert robot_state format into the mt5_snapshot format expected by get_account_info()."""
+        account = state.get("account", {})
+        raw_status = state.get("status", "stopped").upper()
+        connected = raw_status in ("RUNNING", "WAITING", "SCANNING", "HOLDING", "PAUSED")
+        conn_status = "connected" if connected else "disconnected"
+        return {
+            "account_info": {
+                "balance":          account.get("balance", 0.0),
+                "equity":           account.get("equity",  0.0),
+                "margin":           account.get("margin",  0.0),
+                "free_margin":      account.get("margin_free", 0.0),
+                "floating_profit":  account.get("profit",  0.0),
+                "currency":         account.get("currency", "USD"),
+                "leverage":         account.get("leverage", 100),
+                "connection_status": conn_status,
+            },
+            "connection_status": conn_status,
+            "today_profit":      account.get("profit", 0.0),
+            "floating_profit":   account.get("profit", 0.0),
+        }

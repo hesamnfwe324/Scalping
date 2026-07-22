@@ -123,17 +123,44 @@ def write_robot_state(
             } if decision.trade_params else None,
         }
 
+    # Derive connection/MT5 status from the trading status string.
+    # "RUNNING", "WAITING", "SCANNING", "HOLDING", "PAUSED" all mean the
+    # engine is connected to the broker; anything else is disconnected.
+    _connected = status.upper() in ("RUNNING", "WAITING", "SCANNING", "HOLDING", "PAUSED")
+    _conn_str = "connected" if _connected else "disconnected"
+
+    # Convenience account dict (legacy "account" key kept for backward compat)
+    _account_dict = {
+        "balance":     account_info.get("balance", 0),
+        "equity":      account_info.get("equity", 0),
+        "profit":      account_info.get("profit", 0),
+        "margin":      account_info.get("margin", 0),
+        "margin_free": account_info.get("freeMargin", account_info.get("free_margin", 0)),
+        "currency":    account_info.get("currency", "USD"),
+        "leverage":    account_info.get("leverage", 100),
+    }
+
     state = {
         "status":           status,
-        "last_update":      _now_iso(),
-        "last_signal_time": last_signal_time,
-        "loop_count":       loop_count,
-        "account": {
-            "balance":     account_info.get("balance", 0),
-            "equity":      account_info.get("equity", 0),
-            "profit":      account_info.get("profit", 0),
-            "margin_free": account_info.get("margin_free", 0),
-            "currency":    account_info.get("currency", "USD"),
+        # Fields read by the Telegram panel's robot_service.py
+        "connection_status": _conn_str,
+        "mt5_status":        _conn_str,
+        "last_heartbeat":    _now_iso(),
+        "last_update":       _now_iso(),
+        "last_signal_time":  last_signal_time,
+        "loop_count":        loop_count,
+        # Legacy format (used by some panel views)
+        "account": _account_dict,
+        # account_info: format expected by telegram_panel/services/mt5_service.py
+        "account_info": {
+            "balance":          _account_dict["balance"],
+            "equity":           _account_dict["equity"],
+            "margin":           _account_dict["margin"],
+            "free_margin":      _account_dict["margin_free"],
+            "floating_profit":  _account_dict["profit"],
+            "currency":         _account_dict["currency"],
+            "leverage":         _account_dict["leverage"],
+            "connection_status": _conn_str,
         },
         "open_position":    pos_data,
         "last_decision":    dec_data,

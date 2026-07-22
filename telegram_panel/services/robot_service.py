@@ -154,6 +154,14 @@ class RobotService:
         if self._cache_ts and (now - self._cache_ts) < self._cache_ttl:
             return self._cached_state
 
+        # Try Redis first — required when robot and panel run as separate Render services.
+        # Without REDIS_URL this is a no-op and falls through to file/http.
+        redis_state = await self._read_state_redis()
+        if redis_state is not None:
+            self._cached_state = redis_state
+            self._cache_ts = now
+            return self._cached_state
+
         if self._interface_mode == "file":
             state = await self._read_state_file()
         elif self._interface_mode == "http":
