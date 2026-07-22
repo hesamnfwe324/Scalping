@@ -1,115 +1,122 @@
 """
-    Render web-service wrapper — GoldScalperPro v4 Live Trading Engine.
+Render web-service wrapper — GoldScalperPro v4 Live Trading Engine.
 
-    Design: health server runs forever (process never exits); robot loop
-    restarts with exponential backoff on any failure.
-    Ping /health every 14 min (UptimeRobot free) to keep the free-tier warm.
-    """
-    import asyncio
-    import os
-    import sys
-    import traceback
+Design: health server runs forever (process never exits); robot loop
+restarts with exponential backoff on any failure.
+Ping /health every 14 min (UptimeRobot free) to keep the free-tier warm.
+"""
+import asyncio
+import os
+import sys
+import traceback
 
-    _root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    if _root not in sys.path:
-      sys.path.insert(0, _root)
+_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _root not in sys.path:
+    sys.path.insert(0, _root)
 
-    from aiohttp import web
+from aiohttp import web
 
-    PORT = int(os.environ.get("PORT", 8080))
+PORT = int(os.environ.get("PORT", 10000))
 
-    _BACKOFF_BASE = 30
-    _BACKOFF_MAX  = 300
-    _backoff      = _BACKOFF_BASE
-    _robot_status = "STARTING"
-
-
-    async def _health(_req):
-      return web.Response(text=f"OK status={_robot_status}", content_type="text/plain")
+_BACKOFF_BASE = 30
+_BACKOFF_MAX  = 300
+_backoff      = _BACKOFF_BASE
+_robot_status = "STARTING"
 
 
-    async def _run_health_server():
-      app = web.Application()
-      app.router.add_get("/", _health)
-      app.router.add_get("/health", _health)
-      runner = web.AppRunner(app)
-      await runner.setup()
-      site = web.TCPSite(runner, "0.0.0.0", PORT)
-      await site.start()
-      print(f"[health] Listening on 0.0.0.0:{PORT}", flush=True)
-      while True:
-          await asyncio.sleep(60)
+async def _health(_req):
+    return web.Response(text=f"OK status={_robot_status}", content_type="text/plain")
 
 
-    async def _run_robot_once():
-      global _robot_status
-      from live_trading.config import MTAPI_URL, MT5_USER, MT5_PASSWORD
-      from live_trading.logger import get_logger
-      from live_trading.trading.live_loop import GoldScalperLive
-
-      log = get_logger()
-      missing = [v for v, val in [("MT5_USER", MT5_USER), ("MT5_PASSWORD", MT5_PASSWORD), ("MTAPI_URL", MTAPI_URL)] if not val]
-      if missing:
-          msg = "Missing required env vars: " + ", ".join(missing)
-          print(f"[robot] {msg}", flush=True)
-          _robot_status = "CONFIG_ERROR"
-          raise RuntimeError(msg)
-
-      print(f"[robot] MTAPI_URL={MTAPI_URL}  MT5_USER={MT5_USER}", flush=True)
-      _robot_status = "CONNECTING"
-      engine = GoldScalperLive()
-      result = await engine.start()
-      if result is False:
-          _robot_status = "DISCONNECTED"
-          raise RuntimeError("engine.start() returned False")
-      _robot_status = "STOPPED"
+async def _run_health_server():
+    app = web.Application()
+    app.router.add_get("/", _health)
+    app.router.add_get("/health", _health)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, "0.0.0.0", PORT)
+    await site.start()
+    print(f"[health] Listening on 0.0.0.0:{PORT}", flush=True)
+    while True:
+        await asyncio.sleep(60)
 
 
-    async def _robot_supervisor():
-      global _backoff, _robot_status
-      attempt = 0
-      while True:
-          attempt += 1
-          print(f"[supervisor] Attempt #{attempt}", flush=True)
-          try:
-              await _run_robot_once()
-              print("[supervisor] Robot exited cleanly.", flush=True)
-              _backoff = _BACKOFF_BASE
-          except Exception:
-              wait = min(_backoff, _BACKOFF_MAX)
-              _backoff = min(_backoff * 2, _BACKOFF_MAX)
-              _robot_status = f"RETRY_IN_{wait}s"
-              traceback.print_exc()
-              print(f"[supervisor] Retrying in {wait}s", flush=True)
-              await asyncio.sleep(wait)
-          else:
-              await asyncio.sleep(_BACKOFF_BASE)
+async def _run_robot_once():
+    global _robot_status
+    from live_trading.config import MTAPI_URL, MT5_USER, MT5_PASSWORD
+    from live_trading.logger import get_logger
+    from live_trading.trading.live_loop import GoldScalperLive
+
+    log = get_logger()
+    missing = [v for v, val in [
+        ("MT5_USER",    MT5_USER),
+        ("MT5_PASSWORD", MT5_PASSWORD),
+        ("MTAPI_URL",   MTAPI_URL),
+    ] if not val]
+    if missing:
+        msg = "Missing required env vars: " + ", ".join(missing)
+        print(f"[robot] {msg}", flush=True)
+        _robot_status = "CONFIG_ERROR"
+        raise RuntimeError(msg)
+
+    print(f"[robot] MTAPI_URL={MTAPI_URL}  MT5_USER={MT5_USER}", flush=True)
+    _robot_status = "CONNECTING"
+    engine = GoldScalperLive()
+    result = await engine.start()
+    if result is False:
+        _robot_status = "DISCONNECTED"
+        raise RuntimeError("engine.start() returned False — MT5 connection failed")
+    _robot_status = "STOPPED"
 
 
-    async def _main():
-      print(f"[server] Starting — PORT={PORT}  Python {sys.version_info.major}.{sys.version_info.minor}", flush=True)
-      health = asyncio.create_task(_run_health_server())
-      await asyncio.sleep(0.3)
-      supervisor = asyncio.create_task(_robot_supervisor())
-      try:
-          await asyncio.gather(health, supervisor)
-      except Exception:
-          traceback.print_exc()
-          # Never exit — keep alive even if both tasks somehow die
-          print("[server] gather() raised — entering keep-alive loop", flush=True)
-          while True:
-              await asyncio.sleep(60)
+async def _robot_supervisor():
+    global _backoff, _robot_status
+    attempt = 0
+    while True:
+        attempt += 1
+        print(f"[supervisor] Starting robot attempt #{attempt} …", flush=True)
+        try:
+            await _run_robot_once()
+            print("[supervisor] Robot exited cleanly — scheduling restart.", flush=True)
+            _backoff = _BACKOFF_BASE
+        except Exception:
+            wait = min(_backoff, _BACKOFF_MAX)
+            _backoff = min(_backoff * 2, _BACKOFF_MAX)
+            _robot_status = f"RETRY_IN_{wait}s"
+            print(
+                f"[supervisor] Robot error (attempt #{attempt}), retrying in {wait}s:",
+                flush=True,
+            )
+            traceback.print_exc()
+            await asyncio.sleep(wait)
+        else:
+            await asyncio.sleep(_BACKOFF_BASE)
 
 
-    if __name__ == "__main__":
-      try:
-          asyncio.run(_main())
-      except KeyboardInterrupt:
-          print("[server] Keyboard interrupt.", flush=True)
-      except Exception:
-          traceback.print_exc()
-          # Last-resort: keep process alive even on unexpected crash
-          import time
-          while True:
-              time.sleep(60)
-    
+async def _main():
+    print(f"[server] Python {sys.version}  PORT={PORT}", flush=True)
+    health = asyncio.create_task(_run_health_server())
+    # Give the health server a moment to bind before loading the trading engine.
+    await asyncio.sleep(1)
+    supervisor = asyncio.create_task(_robot_supervisor())
+    try:
+        await asyncio.gather(health, supervisor)
+    except Exception:
+        traceback.print_exc()
+        # Never exit — keep alive even if both tasks somehow die.
+        print("[server] gather() raised — entering keep-alive loop", flush=True)
+        while True:
+            await asyncio.sleep(60)
+
+
+if __name__ == "__main__":
+    try:
+        asyncio.run(_main())
+    except KeyboardInterrupt:
+        print("[server] Keyboard interrupt — shutting down.", flush=True)
+    except Exception:
+        traceback.print_exc()
+        # Last-resort: keep process alive even on unexpected crash.
+        import time
+        while True:
+            time.sleep(60)

@@ -7,24 +7,35 @@ services:
     buildCommand: pip install -r live_trading/requirements.txt
     startCommand: python live_trading/server.py
     envVars:
-      - key: METAAPI_TOKEN
+      # ── MT5 broker connection (via mtapi.io bridge) ──────────────────────
+      - key: MTAPI_URL
+        value: "https://goldscalper-mtapi.onrender.com"
+      - key: MT5_HOST
+        value: "AMarkets-Demo"
+      - key: MT5_PORT
+        value: "443"
+      - key: MT5_USER
         sync: false
-      - key: METAAPI_ACCOUNT_ID
+      - key: MT5_PASSWORD
         sync: false
+      # ── Symbol & strategy ────────────────────────────────────────────────
       - key: SYMBOL
         value: XAUUSD
       - key: RISK_PERCENT
         value: "1.0"
       - key: MIN_CONFIRMATIONS
         value: "3"
+      # ── Risk Guardian circuit breakers ───────────────────────────────────
       - key: DAILY_LOSS_LIMIT_PCT
         value: "3.0"
       - key: MAX_DRAWDOWN_PCT
         value: "8.0"
       - key: SLIPPAGE_POINTS
         value: "30"
+      # ── Runtime ─────────────────────────────────────────────────────────
       - key: PYTHON_VERSION
         value: "3.11.0"
+      # ── State files ──────────────────────────────────────────────────────
       - key: STATE_FILE
         value: "/tmp/robot_state.json"
       - key: MT5_SNAPSHOT
@@ -35,6 +46,7 @@ services:
         value: "/tmp/guardian_state.json"
       - key: LOG_FILE
         value: "/tmp/robot.log"
+      # ── Redis IPC (set from Render Redis service) ─────────────────────────
       - key: REDIS_URL
         value: ""
 
