@@ -80,12 +80,14 @@ async def connect(*args, **kwargs) -> bool:
         return False
 
     try:
-        log.info(f"Connecting to MT5 via mtapi.io → {MT5_HOST}:{MT5_PORT} user={MT5_USER}")
-        result = await _get("Connect", {
-            "user":     MT5_USER,
-            "password": MT5_PASSWORD,
-            "host":     MT5_HOST,
-            "port":     MT5_PORT,
+        log.info(f"Connecting to MT5 via mtapi.io → {MT5_HOST} user={MT5_USER}")
+        # Use ConnectEx with serverName — /Connect?host= needs an IP address,
+        # but MT5_HOST is a broker server name like 'AMarkets-Demo'.
+        # ConnectEx resolves the broker name to the correct IP automatically.
+        result = await _get("ConnectEx", {
+            "user":       MT5_USER,
+            "password":   MT5_PASSWORD,
+            "serverName": MT5_HOST,
         })
 
         if isinstance(result, str):
