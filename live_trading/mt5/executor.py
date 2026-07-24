@@ -1,13 +1,17 @@
 """
-mtapi.io Order Executor — place, modify and close orders via mtapi REST API.
+MetaAPI.cloud Order Executor — GoldScalperPro v4
 
-Uses the connection token managed by connector.py.
-mtapi.io REST reference: https://mt5.mtapi.io/index.html
+Places, modifies, and closes MT5 orders via the MetaAPI RPC connection
+managed by connector.py.
+
+MetaAPI trade docs: https://metaapi.cloud/docs/client/
 """
+
 from dataclasses import dataclass
 from typing import Optional
+
 from live_trading.logger import get_logger
-from live_trading.mt5.connector import _get, get_connection
+from live_trading.mt5.connector import get_connection
 
 log = get_logger()
 
@@ -23,9 +27,9 @@ class TradeResult:
 # ── Lot normalisation ─────────────────────────────────────────────────────────
 
 def _normalise_lot(lot: float,
-                   vol_min: float  = 0.01,
+                   vol_min:  float = 0.01,
                    vol_step: float = 0.01,
-                   vol_max: float  = 500.0) -> float:
+                   vol_max:  float = 500.0) -> float:
     steps  = round((lot - vol_min) / vol_step)
     result = vol_min + steps * vol_step
     return max(vol_min, min(vol_max, round(result, 4)))
@@ -35,43 +39,47 @@ def _normalise_lot(lot: float,
 
 async def place_market_order(
     symbol:    str,
-    direction: str,       # "BUY" | "SELL"
+    direction: str,     # "BUY" | "SELL"
     lot_size:  float,
     sl:        float,
     tp:        float,
     comment:   str = "GSPv4",
     deviation: int = 30,
 ) -> TradeResult:
-    token = get_connection()
-    if token is None:
-        return TradeResult(False, None, "No MT5 connection")
+    conn = get_connection()
+    if conn is None:
+        return TradeResult(False, None, "No MetaAPI connection")
 
-    lot       = _normalise_lot(lot_size)
-    operation = "Buy" if direction == "BUY" else "Sell"
-
+    lot = _normalise_lot(lot_size)
     log.debug(f"Placing {direction} {lot} lots {symbol} — SL={sl}  TP={tp}")
 
     try:
-        result = await _get("OrderSend", {
-            "id":        token,
-            "symbol":    symbol,
-            "operation": operation,
-            "volume":    lot,
-            "sl":        round(sl, 2),
-            "tp":        round(tp, 2),
+        options = {
             "comment":   comment[:32],
-        })
+            "slippage":  deviation,
+        }
+        if direction.upper() == "BUY":
+            result = await conn.create_market_buy_order(
+                symbol, lot,
+                stop_loss=round(sl, 2),
+                take_profit=round(tp, 2),
+                options=options,
+            )
+        else:
+            result = await conn.create_market_sell_order(
+                symbol, lot,
+                stop_loss=round(sl, 2),
+                take_profit=round(tp, 2),
+                options=options,
+            )
 
-        # mtapi returns {"order": <ticket>, "retcode": 10009} on success
-        retcode = result.get("retcode", -1)
-        if retcode == 10009 or "order" in result:
-            ticket  = str(result.get("order", ""))
-            log.info(f"✅ Trade opened — ticket={ticket}  {direction} {lot} lots  SL={sl}  TP={tp}")
-            return TradeResult(True, ticket, "OK", ticket)
-
-        msg = result.get("message", str(result))
-        log.error(f"❌ OrderSend failed: {msg}")
-        return TradeResult(False, None, msg)
+        # MetaAPI returns a dict with 'orderId' and 'tradeExecutionTime'
+        pos_id = str(result.get("positionId", result.get("orderId", "")))
+        log.info(
+            f"✅ Trade opened — positionId={pos_id}  "
+            f"{direction} {lot} lots  SL={sl}  TP={tp}"
+        )
+        return TradeResult(True, pos_id, "OK", pos_id)
 
     except Exception as exc:
         log.error(f"❌ place_market_order error: {exc}")
@@ -80,25 +88,15 @@ async def place_market_order(
 
 # ── Close position ────────────────────────────────────────────────────────────
 
-async def close_position(position_id: str) -> TradeResult:
-    token = get_connection()
-    if token is None:
-        return TradeResult(False, None, "No MT5 connection")
+async def close_position(position_id: str, **kwargs) -> TradeResult:
+    conn = get_connection()
+    if conn is None:
+        return TradeResult(False, None, "No MetaAPI connection")
 
     try:
-        result = await _get("ClosePosition", {
-            "id":     token,
-            "ticket": position_id,
-        })
-
-        retcode = result.get("retcode", -1)
-        if retcode == 10009 or result.get("order"):
-            log.info(f"✅ Position {position_id} closed")
-            return TradeResult(True, position_id, "Closed")
-
-        msg = result.get("message", str(result))
-        log.error(f"❌ ClosePosition failed: {msg}")
-        return TradeResult(False, None, msg)
+        result = await conn.close_position(position_id)
+        log.info(f"✅ Position {position_id} closed")
+        return TradeResult(True, position_id, "Closed")
 
     except Exception as exc:
         log.error(f"❌ close_position error: {exc}")
@@ -110,26 +108,18 @@ async def close_position(position_id: str) -> TradeResult:
 async def modify_position(position_id: str,
                            sl: float,
                            tp: float) -> TradeResult:
-    token = get_connection()
-    if token is None:
-        return TradeResult(False, None, "No MT5 connection")
+    conn = get_connection()
+    if conn is None:
+        return TradeResult(False, None, "No MetaAPI connection")
 
     try:
-        result = await _get("PositionModify", {
-            "id":     token,
-            "ticket": position_id,
-            "sl":     round(sl, 2),
-            "tp":     round(tp, 2),
-        })
-
-        retcode = result.get("retcode", -1)
-        if retcode == 10009 or result.get("order"):
-            log.info(f"✅ Position {position_id} modified — SL={sl}  TP={tp}")
-            return TradeResult(True, position_id, "Modified")
-
-        msg = result.get("message", str(result))
-        log.error(f"❌ PositionModify failed: {msg}")
-        return TradeResult(False, None, msg)
+        await conn.modify_position(
+            position_id,
+            stop_loss=round(sl, 2),
+            take_profit=round(tp, 2),
+        )
+        log.info(f"✅ Position {position_id} modified — SL={sl}  TP={tp}")
+        return TradeResult(True, position_id, "Modified")
 
     except Exception as exc:
         log.error(f"❌ modify_position error: {exc}")

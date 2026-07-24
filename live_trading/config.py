@@ -1,13 +1,19 @@
 """
 GoldScalperPro v4 — Live Trading Configuration
-MT5 access via mtapi.io (platform-agnostic REST bridge — no MetaAPI needed).
+MT5 access via MetaAPI.cloud (full broker database, no local MT5 terminal needed).
 """
 import os
 
-# ── mtapi.io Bridge ───────────────────────────────────────────────────────────
-# Self-hosted mtapi Docker instance on Render:  https://goldscalper-mtapi.onrender.com
-# Falls back to public demo endpoint for testing: https://mt5.mtapi.io
-MTAPI_URL     = os.getenv("MTAPI_URL",     "https://mt5.mtapi.io")
+# ── MetaAPI.cloud ─────────────────────────────────────────────────────────────
+# Sign up free at https://metaapi.cloud, add your MT5 account, then set these
+# two env vars on Render (robot service):
+#   METAAPI_TOKEN      — API token from the MetaAPI dashboard
+#   METAAPI_ACCOUNT_ID — the MT5 account ID shown in MetaAPI dashboard
+METAAPI_TOKEN      = os.getenv("METAAPI_TOKEN",      "")
+METAAPI_ACCOUNT_ID = os.getenv("METAAPI_ACCOUNT_ID", "")
+
+# ── MT5 Broker Credentials (shown in logs / state only) ──────────────────────
+MTAPI_URL     = os.getenv("MTAPI_URL",     "")   # no longer used
 
 # ── MT5 Broker Credentials ────────────────────────────────────────────────────
 # MT5_HOST: broker server name exactly as shown in MT5 terminal
@@ -55,6 +61,4 @@ WYCKOFF_SPRING_MARGIN = 2.06
 # ── Redis IPC ─────────────────────────────────────────────────────────────────
 REDIS_URL = os.getenv("REDIS_URL", "")
 
-# ── Legacy aliases (kept for any code that still imports these names) ─────────
-METAAPI_TOKEN      = ""
-METAAPI_ACCOUNT_ID = ""
+# (METAAPI_TOKEN and METAAPI_ACCOUNT_ID are now read from env at the top)
