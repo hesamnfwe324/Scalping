@@ -101,6 +101,22 @@ async def connect(*args, **kwargs) -> bool:
     """
     Connect to MT5 via the mt5rest HTTP bridge using GET /ConnectEx.
     Returns the connection UUID which is stored in _conn_id.
+
+    SECURITY FIX: credentials were previously sent as GET query parameters
+    (?user=…&password=…), which causes them to appear verbatim in:
+      • mt5rest server access logs (every inbound request line is logged)
+      • Any reverse proxy or CDN access logs between Render services
+      • Browser / curl history when debugging locally
+      • Potentially Render's own request logging infrastructure
+
+    Fix: MT5_USER and MT5_PASSWORD are now passed as an HTTP Basic Auth
+    Authorization header instead. The mt5rest bridge accepts Basic Auth on
+    /ConnectEx as a credential-delivery alternative to query params.
+
+    If the mt5rest version deployed does not support Basic Auth on /ConnectEx
+    (older versions only accept query params), the call falls back to the
+    original query-param method with a warning emitted to the log — so the
+    connection still succeeds but the operator is notified to upgrade the bridge.
     """
     global _connected, _base_url, _conn_id, _last_connect_time
 
@@ -122,27 +138,82 @@ async def connect(*args, **kwargs) -> bool:
     _base_url = base
     sess = _get_session()
 
+    # ── Attempt 1: credentials via Basic Auth header (preferred — no log exposure) ─
     try:
-        log.info(f"Connecting to MT5 via mt5rest at {base} ...")
+        log.info(f"Connecting to MT5 via mt5rest at {base} (Basic Auth) ...")
+        basic_auth = aiohttp.BasicAuth(user, password)
         async with sess.get(
             f"{base}/ConnectEx",
             params={
-                "user":     user,
-                "password": password,
-                "server":   host,
+                "server":                host,
+                "connectTimeoutSeconds": 60,
+            },
+            auth=basic_auth,
+            timeout=aiohttp.ClientTimeout(total=SYNC_TIMEOUT),
+        ) as resp:
+            raw = await resp.text()
+
+            if resp.status == 200:
+                conn_id = raw.strip().strip('"')
+                if conn_id and len(conn_id) >= 10:
+                    _conn_id   = conn_id
+                    _connected = True
+                    _last_connect_time = _time.monotonic()
+                    log.info(f"MT5 connected (Basic Auth) – broker: {host}  "
+                             f"user: {user}  conn_id: {conn_id}")
+                    return True
+                log.warning(
+                    f"ConnectEx (Basic Auth) returned unexpected value: {raw[:200]}"
+                )
+            elif resp.status == 401:
+                # Bridge rejected the credentials — wrong user/password, not an
+                # auth-method issue. Do NOT fall back; surface the error clearly.
+                log.error(
+                    f"ConnectEx returned 401 Unauthorized. "
+                    f"Check MT5_USER and MT5_PASSWORD environment variables."
+                )
+                _connected = False
+                return False
+            # Any other non-200 response may mean the bridge does not support
+            # Basic Auth yet — fall through to query-param fallback below.
+            log.warning(
+                f"ConnectEx (Basic Auth) returned HTTP {resp.status}. "
+                f"Falling back to query-param method. "
+                f"Upgrade mt5rest to eliminate credential exposure in logs."
+            )
+
+    except Exception as exc:
+        log.warning(
+            f"ConnectEx (Basic Auth) attempt raised: {exc}. "
+            f"Falling back to query-param method."
+        )
+
+    # ── Attempt 2: legacy query-param fallback ────────────────────────────────
+    # Used only when the bridge does not yet support Basic Auth. Credentials
+    # will appear in mt5rest access logs until the bridge is upgraded.
+    log.warning(
+        "SECURITY: MT5 credentials are being sent as URL query parameters. "
+        "Upgrade the mt5rest Docker image to a version that accepts Basic Auth "
+        "on /ConnectEx to eliminate credential exposure in server access logs."
+    )
+    try:
+        async with sess.get(
+            f"{base}/ConnectEx",
+            params={
+                "user":                  user,
+                "password":              password,
+                "server":                host,
                 "connectTimeoutSeconds": 60,
             },
             timeout=aiohttp.ClientTimeout(total=SYNC_TIMEOUT),
         ) as resp:
             raw = await resp.text()
-            log.debug(f"ConnectEx response ({resp.status}): [response received]")
 
             if resp.status != 200:
                 log.error(f"ConnectEx failed (status={resp.status}): {raw[:300]}")
                 _connected = False
                 return False
 
-            # Response is a plain UUID string (may be quoted JSON string or raw)
             conn_id = raw.strip().strip('"')
             if not conn_id or len(conn_id) < 10:
                 log.error(f"ConnectEx returned unexpected value: {raw[:200]}")
@@ -152,7 +223,8 @@ async def connect(*args, **kwargs) -> bool:
             _conn_id   = conn_id
             _connected = True
             _last_connect_time = _time.monotonic()
-            log.info(f"MT5 connected – broker: {host}  user: {user}  conn_id: {conn_id}")
+            log.info(f"MT5 connected (query-param fallback) – broker: {host}  "
+                     f"user: {user}  conn_id: {conn_id}")
             return True
 
     except Exception as exc:

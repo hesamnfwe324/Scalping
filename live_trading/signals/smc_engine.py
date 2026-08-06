@@ -41,6 +41,48 @@ CFG_M5 = SmcConfig(
     max_order_blocks=6, max_fvgs=6, max_bos=5, max_choch=3, max_sweeps=5,
 )
 
+# CRITICAL FIX: H1 config — thresholds scaled for H1 candle sizes.
+# M5 thresholds (e.g. fvg_min_size=0.10, near_ob_threshold=0.50) are
+# far too tight for H1 candles whose bodies and wicks are typically 10–15×
+# larger than M5 candles for XAUUSD. Using CFG_M5 on H1 data caused:
+#   • Nearly zero FVGs detected (min size too small relative to H1 volatility)
+#   • BOS/CHoCH almost never triggered (min_break_distance too tight)
+#   • Equal-level tolerance too narrow (0.15 vs ~$1–3 typical H1 range)
+# These values are calibrated for XAUUSD H1 where ATR ≈ $5–15.
+CFG_H1 = SmcConfig(
+    swing_lookback=5, fvg_min_size=1.0,
+    equal_level_tolerance=1.5,
+    liquidity_sweep_min=1.5, min_sweep_close_margin=1.0,
+    near_ob_threshold=5.0, near_fvg_threshold=3.0,
+    min_ob_body_size=1.5, min_ob_body_ratio=0.30,
+    min_break_distance=2.0, min_bos_body_ratio=0.35,
+    max_order_blocks=6, max_fvgs=6, max_bos=5, max_choch=3, max_sweeps=5,
+)
+
+# H4 / D1 config — even larger thresholds for higher timeframes.
+CFG_H4 = SmcConfig(
+    swing_lookback=5, fvg_min_size=3.0,
+    equal_level_tolerance=5.0,
+    liquidity_sweep_min=5.0, min_sweep_close_margin=3.0,
+    near_ob_threshold=15.0, near_fvg_threshold=10.0,
+    min_ob_body_size=5.0, min_ob_body_ratio=0.30,
+    min_break_distance=6.0, min_bos_body_ratio=0.35,
+    max_order_blocks=6, max_fvgs=6, max_bos=5, max_choch=3, max_sweeps=5,
+)
+
+# Timeframe → config map for analyze_smc_structure()
+_TF_CFG_MAP: dict[str, SmcConfig] = {
+    "M1": CFG_M5, "1m": CFG_M5,
+    "M5": CFG_M5, "5m": CFG_M5,
+    "M10": CFG_M5, "10m": CFG_M5,
+    "M15": CFG_M5, "15m": CFG_M5,
+    "M20": CFG_M5, "20m": CFG_M5,
+    "M30": CFG_M5, "30m": CFG_M5,
+    "H1": CFG_H1, "1h": CFG_H1,
+    "H4": CFG_H4, "4h": CFG_H4,
+    "D1": CFG_H4, "1d": CFG_H4,
+}
+
 
 # ── Data types ────────────────────────────────────────────────────────────────
 
@@ -500,12 +542,22 @@ def _compute_smc_signal(
 
 # ── Main entry point ──────────────────────────────────────────────────────────
 
-def analyze_smc_structure(candles: List[OHLCV]) -> SmcResult:
-    cfg = CFG_M5
+def analyze_smc_structure(candles: List[OHLCV], timeframe: str = "M5") -> SmcResult:
+    """Analyse SMC structure using parameters calibrated for *timeframe*.
+
+    CRITICAL FIX: the previous implementation hardcoded CFG_M5 regardless of
+    timeframe, making HTF (H1/H4) SMC analysis use M5-scale thresholds that
+    were far too tight for larger candle bodies — almost no BOS/FVG/OB were
+    detected on H1, making the MTF filter's SMC vote permanently NEUTRAL.
+
+    Callers that omit timeframe default to "M5" for backward compatibility.
+    """
+    cfg = _TF_CFG_MAP.get(timeframe, CFG_M5)
+    tf_label = timeframe.upper() if timeframe else "M5"
     min_required = cfg.swing_lookback * 2 + 10
 
     _empty = SmcResult(
-        timeframe="M5",
+        timeframe=tf_label,
         timestamp=candles[-1].time if candles else "",
         current_price=candles[-1].close if candles else 0.0,
         trend="NEUTRAL",
@@ -536,7 +588,7 @@ def analyze_smc_structure(candles: List[OHLCV]) -> SmcResult:
         trend, bos, choch, obs, fvgs, sweeps, current_price, cfg)
 
     return SmcResult(
-        timeframe="M5", timestamp=candles[-1].time,
+        timeframe=tf_label, timestamp=candles[-1].time,
         current_price=current_price,
         trend=trend,  # type: ignore
         bos_signals=bos, choch_signals=choch,

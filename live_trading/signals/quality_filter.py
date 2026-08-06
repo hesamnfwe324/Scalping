@@ -1,6 +1,27 @@
 """
 Quality Filter — 10-category final gate.
 Ported from qualityFilter.ts
+
+CRITICAL FIX (session-blocking bug):
+  The previous ALLOWED_SESSIONS list covered all 24 hours (0–7, 7–12, 12–17,
+  17–22, 22–24), making the BLOCKED branch in apply_quality_filter() dead code
+  that could never be reached. XAUUSD has well-known illiquid windows where
+  spread widens, slippage spikes, and false breakouts are elevated:
+
+    • 22:00–02:00 UTC : Dead period — end of NY session to start of Asia.
+                        Lowest real liquidity; spread typically 2–5× normal.
+    • 00:00–02:00 UTC : Especially bad; retail brokers often requote heavily.
+
+  Fixed by splitting the 22-24 block into two: 22:00–22:00 (remove) and
+  adding genuine BLOCKED windows for the dead hours.
+
+  New session map (UTC):
+    00:00–02:00  BLOCKED   — dead period; spread/slippage risk unacceptable
+    02:00–07:00  MODERATE  — Asia session; thinner but tradeable
+    07:00–12:00  PRIME     — London open; high volume
+    12:00–17:00  PRIME     — London + NY overlap; highest volume
+    17:00–22:00  MODERATE  — NY afternoon; declining but liquid
+    22:00–24:00  BLOCKED   — dead period before Asia open
 """
 from dataclasses import dataclass, field
 from typing import List, Literal, Optional
@@ -9,12 +30,20 @@ from live_trading.signals.gold_engine import OHLCV
 from live_trading.signals.market_regime import calc_adx
 from live_trading.config import CONF_HARD_MIN, QUALITY_ADX_MIN
 
+# ── Session schedule (UTC) ────────────────────────────────────────────────────
+# Each tuple: (start_hour_inclusive, end_hour_exclusive, quality)
+# Hours NOT matched by any range return BLOCKED by default.
+#
+# CRITICAL: ranges must NOT form a contiguous 0–24 block or the BLOCKED branch
+# in apply_quality_filter() becomes dead code (unreachable). Two genuine BLOCKED
+# windows are kept open here for the illiquid dead-period hours.
 ALLOWED_SESSIONS = [
-    (0,  7,  "MODERATE"),
-    (7,  12, "PRIME"),
-    (12, 17, "PRIME"),
-    (17, 22, "MODERATE"),
-    (22, 24, "MODERATE"),
+    (2,  7,  "MODERATE"),   # Asia session           — tradeable, thinner
+    (7,  12, "PRIME"),      # London open             — high volume
+    (12, 17, "PRIME"),      # London + NY overlap     — highest volume
+    (17, 22, "MODERATE"),   # NY afternoon            — declining but liquid
+    # 22:00–24:00 UTC : intentionally absent → BLOCKED (dead period)
+    # 00:00–02:00 UTC : intentionally absent → BLOCKED (dead period)
 ]
 
 LATE_EXTENSION_MULT = 10.0
@@ -37,6 +66,11 @@ class QualityFilterResult:
 
 
 def get_session_quality(iso_timestamp: str) -> Literal["PRIME", "MODERATE", "BLOCKED"]:
+    """Return the trading-session quality for a given UTC timestamp.
+
+    Returns BLOCKED for hours not listed in ALLOWED_SESSIONS (dead periods).
+    Never raises — unknown/unparseable timestamps are treated as BLOCKED.
+    """
     try:
         dt   = datetime.fromisoformat(iso_timestamp.replace("Z", "+00:00"))
         hour = dt.hour if dt.tzinfo else datetime.strptime(
@@ -46,6 +80,7 @@ def get_session_quality(iso_timestamp: str) -> Literal["PRIME", "MODERATE", "BLO
     for start, end, quality in ALLOWED_SESSIONS:
         if start <= hour < end:
             return quality  # type: ignore
+    # Hour not covered by any range → dead period
     return "BLOCKED"
 
 
@@ -148,12 +183,15 @@ def apply_quality_filter(
     reasons = []
     last_candle = candles[-1]
 
-    # C-2 FIX: respect BLOCKED sessions — do not override to MODERATE.
-    # BLOCKED hours represent illiquid periods where slippage and false
-    # breakouts are significantly elevated.
+    # Session gate — BLOCKED windows (22:00–02:00 UTC) reject the signal
+    # entirely. These dead-period hours have elevated spread/slippage and
+    # a high rate of false breakouts for XAUUSD.
     session = get_session_quality(last_candle.time)
     if session == "BLOCKED":
-        reasons.append("Outside tradeable session (BLOCKED hours)")
+        reasons.append(
+            "Outside tradeable session (BLOCKED hours: 22:00–02:00 UTC) "
+            "— elevated spread and false-breakout risk"
+        )
 
     adx_val   = adx if adx is not None else calc_adx(candles)
     sev_range = _is_severe_range(candles, adx_val)

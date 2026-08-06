@@ -84,7 +84,7 @@ def _neutral(reason: str) -> MtfBias:
 
 # ── Core computation ──────────────────────────────────────────────────────────
 
-def compute_mtf_bias(htf_candles: List[OHLCV]) -> MtfBias:
+def compute_mtf_bias(htf_candles: List[OHLCV], timeframe: str = "H1") -> MtfBias:
     """
     Derive the HTF directional bias from Trend + SMC + Regime analysis.
 
@@ -97,19 +97,30 @@ def compute_mtf_bias(htf_candles: List[OHLCV]) -> MtfBias:
         Closed candles on the HTF (e.g. H1).  Callers should pass at least
         200 bars so the trend engine can compute EMA-200 reliably; 300 is
         the recommended default (MTF_CANDLE_WINDOW env var).
+    timeframe : str
+        The timeframe label for the HTF candles (e.g. "H1", "H4").
+        Passed to analyze_smc_structure() and analyze_wyckoff() so they
+        use calibrated thresholds for the actual candle size instead of
+        the hardcoded M5 defaults.  Defaults to "H1" (the normal HTF).
 
     Returns
     -------
     MtfBias
         Always non-None.  Check .direction for BUY / SELL / NEUTRAL.
+
+    CRITICAL FIX: the previous call omitted timeframe from analyze_smc_structure()
+    and analyze_wyckoff(), so both used M5-scale parameters on H1 candles.
+    M5 thresholds (e.g. fvg_min_size=0.10, spring_margin=0.20) are ~10–15×
+    too tight for H1 bodies, causing SMC and Wyckoff to return NEUTRAL on
+    virtually every H1 bar — making the MTF filter a no-op in practice.
     """
     if len(htf_candles) < 50:
         return _neutral(f"Insufficient HTF candles ({len(htf_candles)} < 50)")
 
     try:
         trend   : TrendResult  = analyze_trend(htf_candles)
-        smc     : SmcResult    = analyze_smc_structure(htf_candles)
-        wyckoff : WyckoffResult = analyze_wyckoff(htf_candles)
+        smc     : SmcResult    = analyze_smc_structure(htf_candles, timeframe=timeframe)
+        wyckoff : WyckoffResult = analyze_wyckoff(htf_candles, timeframe=timeframe)
         regime  : RegimeResult  = detect_market_regime(
             htf_candles, trend, wyckoff, use_atr_high_vol=False
         )
