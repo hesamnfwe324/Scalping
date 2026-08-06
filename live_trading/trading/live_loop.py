@@ -299,17 +299,40 @@ class GoldScalperLive:
     # ── Wyckoff calibration ───────────────────────────────────────────────────
 
     async def _calibrate_wyckoff(self) -> None:
-        log.info("Calibrating Wyckoff config from live data …")
+        """Calibrate Wyckoff parameters for both M5 and HTF timeframes.
+
+        CRITICAL FIX: previously only calibrated M5 and stored to a single
+        global, which was then used by the MTF filter for H1 analysis —
+        giving H1 Wyckoff the wrong (far too tight) M5 parameters.
+
+        Now calibrates both M5 and MTF_TIMEFRAME separately, storing each
+        under its canonical timeframe key via set_calibrated_config(cfg, tf).
+        """
+        log.info("Calibrating Wyckoff config from live M5 data …")
         candles = await fetch_candles(SYMBOL, TIMEFRAME, 500)
         if candles:
             cfg = calibrate_wyckoff(candles)
-            set_calibrated_config(cfg)
-            log.info(f"Wyckoff calibrated — "
+            set_calibrated_config(cfg, timeframe=TIMEFRAME)
+            log.info(f"Wyckoff calibrated [{TIMEFRAME}] — "
                      f"maxRangePct={cfg.max_range_pct:.5f}  "
                      f"springMargin={cfg.spring_margin:.2f}")
         else:
-            log.warning("Could not fetch candles for Wyckoff calibration; "
+            log.warning("Could not fetch M5 candles for Wyckoff calibration; "
                         "using defaults")
+
+        # Also calibrate for the HTF timeframe used by the MTF filter.
+        if MTF_ENABLED and MTF_TIMEFRAME != TIMEFRAME:
+            log.info(f"Calibrating Wyckoff config from live {MTF_TIMEFRAME} data …")
+            htf_candles = await fetch_candles(SYMBOL, MTF_TIMEFRAME, 500)
+            if htf_candles:
+                htf_cfg = calibrate_wyckoff(htf_candles)
+                set_calibrated_config(htf_cfg, timeframe=MTF_TIMEFRAME)
+                log.info(f"Wyckoff calibrated [{MTF_TIMEFRAME}] — "
+                         f"maxRangePct={htf_cfg.max_range_pct:.5f}  "
+                         f"springMargin={htf_cfg.spring_margin:.2f}")
+            else:
+                log.warning(f"Could not fetch {MTF_TIMEFRAME} candles for HTF Wyckoff "
+                            "calibration; using H1 defaults")
 
     # ── Main async loop ───────────────────────────────────────────────────────
 
@@ -474,7 +497,7 @@ class GoldScalperLive:
             try:
                 htf_candles = await fetch_candles(SYMBOL, MTF_TIMEFRAME, MTF_CANDLE_WINDOW)
                 if len(htf_candles) >= 50:
-                    htf_bias = compute_mtf_bias(htf_candles)
+                    htf_bias = compute_mtf_bias(htf_candles, timeframe=MTF_TIMEFRAME)
                     log.info(
                         f"[{tf}] HTF ({MTF_TIMEFRAME}) bias: {htf_bias.direction}  "
                         f"trend={htf_bias.trend}  smc={htf_bias.smc_signal}  "

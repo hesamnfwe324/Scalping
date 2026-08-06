@@ -68,16 +68,27 @@ services:
         value: "300"
       - key: RISK_PERCENT
         value: "1.0"
-      # TESTING MODE: strict filters relaxed so the robot trades more freely
-      # on the demo account. Tighten these again before going live for real.
+      # ─── Risk / Signal thresholds (PRODUCTION values) ─────────────────────
+      # CRITICAL FIX: These were set to "testing mode" values (1 / 0 / 50 / 50)
+      # that effectively disabled every protection layer. Restored to production
+      # defaults from config.py so Guardian and quality filters work correctly.
+      #
+      #   MIN_CONFIRMATIONS : at least 3 of 4 engines (SMC, Trend, PA, Wyckoff)
+      #                        must agree before a trade is allowed.
+      #   CONF_HARD_MIN     : trades below 35% confidence are always rejected,
+      #                        regardless of confirmations.
+      #   DAILY_LOSS_LIMIT_PCT : Guardian halts trading if intraday P&L drops
+      #                        more than 3% below session-open balance.
+      #   MAX_DRAWDOWN_PCT  : Guardian halts if equity drops more than 8%
+      #                        below the session equity peak.
       - key: MIN_CONFIRMATIONS
-        value: "1"
+        value: "3"
       - key: CONF_HARD_MIN
-        value: "0"
+        value: "35.0"
       - key: DAILY_LOSS_LIMIT_PCT
-        value: "50.0"
+        value: "3.0"
       - key: MAX_DRAWDOWN_PCT
-        value: "50.0"
+        value: "8.0"
       - key: SLIPPAGE_POINTS
         value: "30"
       - key: PYTHON_VERSION
@@ -122,6 +133,11 @@ services:
         value: ""
       - key: PYTHON_VERSION
         value: "3.11.0"
+      # NOTE: /tmp/panel.db is wiped on every Render free-tier restart (ephemeral
+      # filesystem). This loses trade history, sessions, and audit logs stored in
+      # SQLite. Critical trading state (Guardian, robot status) survives through
+      # Redis. To make the panel DB persistent, upgrade to a paid Render plan,
+      # mount a Render Disk at /data, and change this to /data/panel.db.
       - key: PANEL_DB_PATH
         value: "/tmp/panel.db"
       - key: MT5_USER
