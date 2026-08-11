@@ -180,6 +180,7 @@ class MT5Service:
                     swap=raw.get("swap", 0.0),
                     status=TradeStatus.CLOSED,
                     comment=raw.get("comment"),
+                    close_reason=raw.get("close_reason"),
                     magic=raw.get("magic", 0),
                 )
                 trades.append(trade)

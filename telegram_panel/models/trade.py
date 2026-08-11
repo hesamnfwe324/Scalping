@@ -27,6 +27,7 @@ class Trade:
     swap: float = 0.0
     status: TradeStatus = TradeStatus.OPEN
     comment: Optional[str] = None
+    close_reason: Optional[str] = None
     magic: int = 0
     account_id: Optional[int] = None
     # Derived

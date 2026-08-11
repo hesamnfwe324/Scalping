@@ -24,6 +24,7 @@ Resilience improvements over baseline:
 import asyncio
 import json
 import os
+import re
 import sys
 from datetime import datetime, timedelta, timezone
 from typing import List, Optional
@@ -56,7 +57,7 @@ from live_trading.mt5.connector import (
     start_connection_watchdog, start_mt5_session_keepalive,
     fetch_candles, get_account_balance, get_account_info,
     get_open_positions, get_last_completed_bar_time,
-    get_current_quote, mt5_pos_to_dict,
+    get_current_quote, get_closed_position_history, mt5_pos_to_dict,
 )
 from live_trading.mt5.executor import (
     place_market_order, close_position, modify_position, TradeResult
@@ -88,6 +89,81 @@ _RECONNECT_BASE      = RECONNECT_DELAY  # first-failure delay (from config, defa
 # every 5 minutes.  Refreshing every 30 s keeps balance/equity current even
 # when no new candle has fired (deposits, withdrawals, positions closed elsewhere).
 _ACC_REFRESH_INTERVAL = 30.0
+_CLOSE_HISTORY_RETRY_INTERVAL = 60.0
+
+
+def _history_value(record: dict, *keys: str):
+    for key in keys:
+        value = record.get(key)
+        if value is not None and value != "":
+            return value
+    return None
+
+
+def _history_float(record: dict, *keys: str) -> Optional[float]:
+    value = _history_value(record, *keys)
+    try:
+        return float(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _history_datetime(record: dict, *keys: str) -> Optional[str]:
+    value = _history_value(record, *keys)
+    if value is None:
+        return None
+    if isinstance(value, (int, float)):
+        # mt5rest exposes UTC timestamps in milliseconds.
+        return datetime.fromtimestamp(float(value) / 1000, tz=timezone.utc).isoformat()
+    return str(value)
+
+
+def classify_close_reason(
+    history: dict,
+    entry: dict,
+    trailing_stop: Optional[float] = None,
+) -> str:
+    """Classify a completed position using broker history, never floating P&L."""
+    comment = str(_history_value(history, "closeComment", "comment") or "").lower()
+    comment_words = set(re.findall(r"[a-z]+", comment))
+    if (
+        "takeprofit" in comment_words
+        or {"take", "profit"}.issubset(comment_words)
+        or "tp" in comment_words
+    ):
+        return "TP"
+    if (
+        "stoploss" in comment_words
+        or {"stop", "loss"}.issubset(comment_words)
+        or "sl" in comment_words
+    ):
+        return "SL"
+    if (
+        "breakeven" in comment_words
+        or {"break", "even"}.issubset(comment_words)
+    ):
+        return "BE"
+    if "trailing" in comment_words or "trail" in comment_words:
+        return "Trailing"
+
+    close_price = _history_float(history, "closePrice", "price")
+    original_sl = _history_float(entry, "sl", "stop_loss")
+    original_tp = _history_float(entry, "tp", "take_profit")
+    tolerance = max(abs(close_price or 0.0) * 0.00005, 0.01)
+    if close_price is not None and original_tp is not None:
+        if abs(close_price - original_tp) <= tolerance:
+            return "TP"
+    if close_price is not None and original_sl is not None:
+        if abs(close_price - original_sl) <= tolerance:
+            return "SL"
+    if close_price is not None and trailing_stop is not None:
+        if abs(close_price - trailing_stop) <= tolerance:
+            entry_price = _history_float(entry, "entry", "open_price")
+            if entry_price is not None and original_sl is not None:
+                if abs(trailing_stop - entry_price) <= tolerance:
+                    return "BE"
+            return "Trailing"
+    return "Manual"
 
 
 class GoldScalperLive:
@@ -113,6 +189,8 @@ class GoldScalperLive:
         self._last_entry_direction: str = ""
         self.trade_history: List[dict] = []
         self.last_decision: Optional[DecisionResult] = None
+        self._close_history_checked_at: dict[str, float] = {}
+        self._open_position_snapshot_initialized = False
 
         # Risk Guardian — initialized after mt5rest bridge connects
         self.guardian = RiskGuardian(
@@ -432,6 +510,8 @@ class GoldScalperLive:
                 # a step, not up to 5 minutes late.
                 await self._manage_trailing_stop()
                 _checkpoint(f"loop#{self.loop_count} trailing stop managed")
+                await self._reconcile_closed_trades()
+                _checkpoint(f"loop#{self.loop_count} closed trades reconciled")
 
                 # Reset the within-tick trade guard before processing this
                 # tick's bars.  All _on_new_bar() calls that share this tick
@@ -1175,6 +1255,111 @@ class GoldScalperLive:
                 log.warning(
                     f"Trailing stop modify failed for position {pos['id']}: {result.message}"
                 )
+
+    async def _reconcile_closed_trades(self) -> None:
+        """Persist exact exit details for positions no longer open in MT5."""
+        try:
+            raw_positions, _ = await get_open_positions(
+                SYMBOL, self._known_open_tickets(), return_diagnostics=True
+            )
+        except RuntimeError as exc:
+            log.debug(f"Closed-trade reconciliation skipped: {exc}")
+            return
+
+        open_ids = {
+            str(mt5_pos_to_dict(position).get("id"))
+            for position in raw_positions
+        }
+        now = asyncio.get_event_loop().time()
+        candidates: dict[str, dict] = {}
+        for entry in self.trade_history:
+            ticket = entry.get("position_id") or entry.get("ticket")
+            if ticket is None or entry.get("close_time"):
+                continue
+            # TRAIL_SL and close-command audit rows are not entry records.
+            if entry.get("entry") is None and entry.get("lot") is None:
+                continue
+            ticket_id = str(ticket)
+            if ticket_id not in open_ids:
+                candidates.setdefault(ticket_id, entry)
+
+        changed = False
+        for ticket_id, entry in candidates.items():
+            last_checked = self._close_history_checked_at.get(ticket_id, 0.0)
+            if now - last_checked < _CLOSE_HISTORY_RETRY_INTERVAL:
+                continue
+            self._close_history_checked_at[ticket_id] = now
+            try:
+                history = await get_closed_position_history(ticket_id)
+            except RuntimeError as exc:
+                log.warning(
+                    f"Could not read MT5 close history for {ticket_id}: {exc}"
+                )
+                continue
+            if not history:
+                # Missing history is not evidence of a close. Retry later.
+                continue
+            if self._apply_close_history(entry, history):
+                changed = True
+
+        self._open_position_snapshot_initialized = True
+        if changed:
+            self._write_state("RUNNING", self._last_acc_info)
+
+    def _apply_close_history(self, entry: dict, history: dict) -> bool:
+        close_price = _history_float(history, "closePrice", "price")
+        close_time = _history_datetime(
+            history,
+            "closeTime",
+            "closeTimestampUTC",
+            "historyTime",
+            "executionTime",
+        )
+        if close_price is None or not close_time:
+            log.warning(
+                "Ignoring incomplete MT5 close-history record for "
+                f"{entry.get('position_id')}"
+            )
+            return False
+
+        trailing_stop = None
+        ticket_id = str(entry.get("position_id") or entry.get("ticket"))
+        for event in self.trade_history:
+            if str(event.get("position_id")) != ticket_id:
+                continue
+            if event.get("action") == "TRAIL_SL":
+                trailing_stop = _history_float(event, "new_sl")
+
+        gross_profit = _history_float(history, "profit") or 0.0
+        commission = _history_float(history, "commission") or 0.0
+        swap = _history_float(history, "swap") or 0.0
+        fee = _history_float(history, "fee") or 0.0
+        entry.update({
+            "ticket": ticket_id,
+            "type": entry.get("direction", entry.get("type", "UNKNOWN")),
+            "volume": entry.get("lot", entry.get("volume", 0.0)),
+            "open_price": entry.get("entry", entry.get("open_price", 0.0)),
+            "close_price": close_price,
+            "open_time": entry.get("bar_time", entry.get("open_time")),
+            "close_time": close_time,
+            "profit_gross": gross_profit,
+            "commission": commission,
+            "swap": swap,
+            "fee": fee,
+            "profit": gross_profit + commission + swap + fee,
+            "close_reason": classify_close_reason(
+                history, entry, trailing_stop=trailing_stop
+            ),
+            "close_comment": _history_value(history, "closeComment", "comment"),
+            "close_source": "MT5_HISTORY",
+            "status": "CLOSED",
+        })
+        log.info(
+            f"Trade closed ticket={ticket_id} reason={entry['close_reason']} "
+            f"price={close_price:.5f} profit={entry['profit']:+.2f} "
+            f"time={close_time}"
+        )
+        return True
 
     # ── Telegram command processing ───────────────────────────────────────────
 

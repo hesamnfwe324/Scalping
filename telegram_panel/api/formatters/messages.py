@@ -471,7 +471,8 @@ class MessageFormatter:
                     f"\n{icon} <b>{dir_str} #{ticket}</b>  {symbol}\n"
                     f"  📦 {volume}L  |  {open_s} → {close_s}\n"
                     f"  📈 {open_px:.2f} → {close_px:.2f}\n"
-                    f"  💵 P&L: <b>{pnl:+.2f}</b>"
+                    f"  💵 P&L: <b>{pnl:+.2f}</b>\n"
+                    f"  🏷️ Exit: {getattr(t, 'close_reason', None) or 'Unknown'}"
                 )
             except Exception:
                 continue
