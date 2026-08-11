@@ -117,6 +117,19 @@ class SmcResult:
     smc_score: float
 
 
+def get_latest_structure_event(smc: SmcResult) -> Optional[SmcBos | SmcChoch]:
+    """Return the newest confirmed BOS/CHoCH event.
+
+    Structure events are ordered by their closed-candle index, not by the
+    separate truncated BOS/CHoCH lists. On the same candle, CHoCH wins
+    because it represents a reversal event.
+    """
+    events: List[SmcBos | SmcChoch] = [*smc.bos_signals, *smc.choch_signals]
+    if not events:
+        return None
+    return max(events, key=lambda event: (event.bar_index, isinstance(event, SmcChoch)))
+
+
 def detect_order_block_fake_breakout(
     candles: List[OHLCV],
     smc: SmcResult,
