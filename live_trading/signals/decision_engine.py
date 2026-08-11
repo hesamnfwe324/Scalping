@@ -90,6 +90,7 @@ def run_decision_engine(
     min_confirmations: int   = 1,
     use_atr_high_vol:  bool  = False,
     dxy_signal:        str   = "NEUTRAL",
+    require_price_action: bool = False,
 ) -> DecisionResult:
 
     smc     = analyze_smc_structure(candles)
@@ -133,14 +134,19 @@ def run_decision_engine(
         pa_signal       = pa.pa_signal,
         wyckoff_signal  = wyckoff.wyckoff_signal,
         min_confirmations = effective_min_confirmations,
+        require_price_action = require_price_action,
     )
     if not ef.allowed:
         votes = (f"SMC={'✓' if ef.smc else '✗'}  "
                  f"Trend={'✓' if ef.trend else '✗'}  "
                  f"PA={'✓' if ef.price_action else '✗'}  "
                  f"Wyckoff={'✓' if ef.wyckoff else '✗'}")
-        reason = (f"Entry filter: only {ef.confirmation_count}/{effective_min_confirmations} "
-                  f"confirmations — {votes}  [regime={regime.regime}]")
+        if require_price_action and not ef.price_action:
+            reason = (f"Entry filter: Price Action confirmation required — "
+                      f"{votes}  [regime={regime.regime}]")
+        else:
+            reason = (f"Entry filter: only {ef.confirmation_count}/{effective_min_confirmations} "
+                      f"confirmations — {votes}  [regime={regime.regime}]")
         return _make_neutral(smc, wyckoff, pa, trend, [reason], [reason])
 
     if candidate == "BUY"  and not regime.rules.allow_long:

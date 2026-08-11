@@ -25,6 +25,7 @@ def apply_entry_filter(
     pa_signal: str,
     wyckoff_signal: str,
     min_confirmations: int = MIN_CONFIRMATIONS,
+    require_price_action: bool = False,
 ) -> EntryFilterResult:
 
     blocked = EntryFilterResult(
@@ -45,7 +46,7 @@ def apply_entry_filter(
     wyc_ok   = wyckoff_signal == direction
 
     count = sum([smc_ok, trend_ok, pa_ok, wyc_ok])
-    allowed = count >= min_confirmations
+    allowed = count >= min_confirmations and (not require_price_action or pa_ok)
 
     return EntryFilterResult(
         allowed=allowed,

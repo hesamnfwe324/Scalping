@@ -156,6 +156,11 @@ RISK_PERCENT      = _float("RISK_PERCENT",      1.0,  lo=0.01, hi=10.0)
 # Wyckoff fires rarely on 5m; PA patterns don't appear every candle.
 # Requiring 3 caused multi-day silences. 2 keeps quality while allowing flow.
 MIN_CONFIRMATIONS = _int("MIN_CONFIRMATIONS",   2,    lo=1,    hi=10)
+# When enabled, every new trade must also have a same-direction Price Action signal.
+# Default false preserves existing behavior until explicitly enabled on Render.
+REQUIRE_PRICE_ACTION = os.getenv("REQUIRE_PRICE_ACTION", "false").strip().lower() in {
+    "1", "true", "yes", "on",
+}
 # CONF_HARD_MIN=28%: absolute floor after M-2 double-count fix lowered
 # typical PA contribution by ~9pts. Good setups now score 35-50%;
 # garbage stays at 11-13%. 28% cuts noise without blocking solid setups.

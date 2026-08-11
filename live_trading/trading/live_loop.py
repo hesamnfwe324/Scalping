@@ -32,7 +32,7 @@ from live_trading.config import (
     SYMBOL, TIMEFRAME, CANDLE_WINDOW, RISK_PERCENT,
     MAX_OPEN_TRADES, COMMENT,
     BAR_CHECK_INTERVAL, RECONNECT_DELAY, SYNC_TIMEOUT,
-    MIN_CONFIRMATIONS, USE_ATR_HIGH_VOL_FILTER,
+    MIN_CONFIRMATIONS, REQUIRE_PRICE_ACTION, USE_ATR_HIGH_VOL_FILTER,
     DAILY_LOSS_LIMIT_PCT, MAX_DRAWDOWN_PCT, SLIPPAGE_POINTS,
     STATE_FILE, GUARDIAN_STATE_FILE,
     TRAIL_ENABLED, TRAIL_ACTIVATION_R, TRAIL_STEP_R,
@@ -715,6 +715,7 @@ class GoldScalperLive:
             risk_percent=RISK_PERCENT,
             min_confirmations=MIN_CONFIRMATIONS,
             use_atr_high_vol=USE_ATR_HIGH_VOL_FILTER,
+            require_price_action=REQUIRE_PRICE_ACTION,
         )
         self.last_decision = decision
 

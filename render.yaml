@@ -77,6 +77,8 @@ services:
       # deploy from the old file would NOT have reproduced current behavior.
       - key: MIN_CONFIRMATIONS
         value: "2"
+      - key: REQUIRE_PRICE_ACTION
+        value: "true"
       - key: CONF_HARD_MIN
         value: "32"
       - key: DAILY_LOSS_LIMIT_PCT
