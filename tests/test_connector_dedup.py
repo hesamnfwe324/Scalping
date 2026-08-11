@@ -191,6 +191,32 @@ class TestPhantomRowRepair:
         assert result == []
         assert dropped == ["1"]
 
+    def test_internal_volume_is_normalized_to_lots(self):
+        from live_trading.mt5.connector import _dedupe_positions, mt5_pos_to_dict
+
+        rows = [{
+            "ticket": 42,
+            "volume": 1_000_000,
+            "lots": 0.01,
+            "orderType": 0,
+            "openPrice": 4390.07,
+        }]
+        result, dropped = _dedupe_positions(rows)
+        assert dropped == []
+        assert result == rows
+        assert mt5_pos_to_dict(rows[0])["volume"] == 0.01
+        assert mt5_pos_to_dict(rows[0])["type"] == "BUY"
+
+    def test_invalid_direction_is_not_assumed_buy(self):
+        from live_trading.mt5.connector import mt5_pos_to_dict
+
+        position = mt5_pos_to_dict({
+            "ticket": 43,
+            "lots": 0.01,
+            "orderType": 999,
+        })
+        assert position["type"] == "UNKNOWN"
+
 
 class TestOpenPositionsResponse:
     """Malformed OpenedOrders responses must never look like zero positions."""
@@ -198,7 +224,12 @@ class TestOpenPositionsResponse:
     def test_successful_list_is_accepted(self):
         from live_trading.mt5.connector import _parse_open_positions_response
 
-        positions = [{"ticket": 123}]
+        positions = [{
+            "ticket": 123,
+            "lots": 0.01,
+            "orderType": 0,
+            "openPrice": 4390.07,
+        }]
         result, dropped = _parse_open_positions_response(positions, 200)
         assert result == positions
         assert dropped == []

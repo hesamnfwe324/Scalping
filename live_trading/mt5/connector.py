@@ -138,6 +138,11 @@ async def connect(*args, **kwargs) -> bool:
                 "password": password,
                 "server":   host,
                 "connectTimeoutSeconds": 60,
+                # The panel's trade history is backed by the same MT5
+                # session.  Ask mt5rest to download it during ConnectEx so
+                # closed trades are available immediately after reconnects.
+                "downloadOrderHistory": True,
+                "reconnectOnSymbolUpdate": True,
             },
             timeout=aiohttp.ClientTimeout(total=SYNC_TIMEOUT),
         ) as resp:
@@ -736,19 +741,67 @@ def _parse_open_positions_response(
     raise RuntimeError(f"mt5rest OpenedOrders error: {message}")
 
 
-# The mt5rest bridge has occasionally returned two rows for the very same
-# ticket in a single /OpenedOrders response — one with the real fill data
-# and a second phantom row with a wildly out-of-range volume (e.g.
-# 1,000,000 lots — orders of magnitude beyond anything this account could
-# ever margin). Left unfiltered, that phantom row flows straight into the
+# mt5rest exposes both `lots` (the canonical lot value) and `volume` (an
+# integer internal volume).  For example, the bridge can report
+# volume=1,000,000 alongside lots=0.01.  Reading `volume` as lots flows
+# straight into the
 # live position list: it inflates MAX_OPEN_TRADES counting, gets written
 # into the panel snapshot, and the Telegram panel's new-ticket detector
 # (which iterates every row matching a newly-seen ticket) fires a second
 # "TRADE OPENED" notification for the same trade with fabricated size/price.
-# A retail gold position this bot ever opens is a few lots at most, so
-# anything above this cap is unambiguously corrupted bridge output, not a
-# real fill — it is dropped rather than guessed at.
+# Prefer the bridge's `lots` field. If an older bridge omits it, accept only
+# a small, already lot-like `volume`; otherwise the row is untrusted. Never
+# guess at a conversion for a large raw value.
 _MAX_SANE_VOLUME_LOTS = 100.0
+
+
+def _finite_positive(value: object) -> Optional[float]:
+    """Return a finite positive number, or None for malformed MT5 data."""
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    if number != number or number in (float("inf"), float("-inf")):
+        return None
+    return number if number > 0 else None
+
+
+def _position_lots(row: dict) -> Optional[float]:
+    """Read the canonical lot size from an mt5rest OpenedOrder.
+
+    `lots` is the public lot value. `volume` may be an integer internal value
+    in some mt5rest responses, so a large raw value is never used as a trade
+    size when the canonical `lots` field is absent.
+    """
+    lots = _finite_positive(row.get("lots"))
+    if lots is not None:
+        return lots
+
+    volume = _finite_positive(row.get("volume"))
+    if volume is None or volume > _MAX_SANE_VOLUME_LOTS:
+        # Without the canonical `lots` field, a huge raw volume is
+        # untrusted. Do not guess whether it is an internal unit value.
+        return None
+    return volume
+
+
+def _position_direction(row: dict) -> str:
+    """Return BUY/SELL when the bridge gives a known market direction."""
+    raw = row.get("type")
+    if raw is None:
+        raw = row.get("orderType")
+    if isinstance(raw, str):
+        direction = raw.upper().strip()
+        if direction in {"BUY", "SELL"}:
+            return direction
+        try:
+            raw = int(raw)
+        except (TypeError, ValueError):
+            return "UNKNOWN"
+    try:
+        return {0: "BUY", 1: "SELL"}.get(int(raw), "UNKNOWN")
+    except (TypeError, ValueError):
+        return "UNKNOWN"
 
 
 def _dedupe_positions(
@@ -804,13 +857,14 @@ def _dedupe_positions(
         group = by_ticket[ticket]
         if len(group) == 1:
             row = group[0]
-            vol = float(row.get("volume", row.get("lots", 0.0)) or 0.0)
-            if vol > _MAX_SANE_VOLUME_LOTS:
+            lots = _position_lots(row)
+            direction = _position_direction(row)
+            if lots is None:
                 known = known_positions.get(str(ticket))
-                if known is not None:
+                if known is not None and _finite_positive(known.get("volume")) is not None:
                     # Ticket is one we opened ourselves and mt5rest still
-                    # lists it in OpenedOrders — it's genuinely open, only
-                    # the volume/type fields on this poll are corrupted.
+                    # lists it in OpenedOrders — it is genuinely open, but
+                    # the bridge did not provide a usable lot value/direction.
                     # Repair rather than drop.
                     repaired = dict(row)
                     repaired["volume"] = known["volume"]
@@ -818,7 +872,7 @@ def _dedupe_positions(
                     repaired["type"] = known["direction"]
                     log.warning(
                         f"mt5rest returned ticket {ticket!r} with a corrupted "
-                        f"volume ({vol:.0f}L) and type={row.get('type')} — "
+                        f"volume/type ({row.get('volume')!r}/{row.get('type')!r}) — "
                         f"repaired from this robot's own trade log "
                         f"(volume={known['volume']}, direction={known['direction']}) "
                         f"instead of dropping a position known to be open."
@@ -834,8 +888,9 @@ def _dedupe_positions(
                     # it could be a real ticket we just don't recognise yet.
                     log.warning(
                         f"mt5rest returned a lone row for ticket {ticket!r} "
-                        f"with an insane volume ({vol:.0f}L > {_MAX_SANE_VOLUME_LOTS}L limit) "
-                        f"— dropping phantom row (direction={row.get('type')}, "
+                        f"with an unusable lot value "
+                        f"(volume={row.get('volume')!r}, lots={row.get('lots')!r}) "
+                        f"— dropping phantom row (direction={direction}, "
                         f"openPrice={row.get('openPrice', row.get('price_open'))})"
                     )
                     dropped_unknown.append(str(ticket))
@@ -845,20 +900,20 @@ def _dedupe_positions(
 
         sane = [
             row for row in group
-            if 0 < float(row.get("volume", row.get("lots", 0.0)) or 0.0) <= _MAX_SANE_VOLUME_LOTS
+            if _position_lots(row) is not None
         ]
         if len(sane) == 1:
             log.warning(
                 f"mt5rest returned {len(group)} duplicate rows for ticket {ticket} "
                 f"— keeping the one with a plausible volume, dropping the rest "
-                f"(volumes seen: {[row.get('volume', row.get('lots')) for row in group]})"
+                f"(lots seen: {[_position_lots(row) for row in group]})"
             )
             result.append(sane[0])
         else:
             log.warning(
                 f"mt5rest returned {len(group)} duplicate rows for ticket {ticket} "
                 f"with no single plausible volume — keeping the first row only "
-                f"(volumes seen: {[row.get('volume', row.get('lots')) for row in group]})"
+                f"(lots seen: {[_position_lots(row) for row in group]})"
             )
             result.append(group[0])
     return result, dropped_unknown
@@ -881,19 +936,12 @@ async def get_last_completed_bar_time(
 
 def mt5_pos_to_dict(pos: dict) -> dict:
     """Normalise a raw mt5rest OpenedOrder dict into the standard internal format."""
-    type_map = {0: "BUY", 1: "SELL"}
-    raw_type = pos.get("type", pos.get("orderType", 0))
-    try:
-        raw_type = int(raw_type)
-    except (TypeError, ValueError):
-        raw_type = 0
-
     return {
         "id":         str(pos.get("ticket", pos.get("identifier", ""))),
         "ticket":     pos.get("ticket", pos.get("identifier", 0)),
         "symbol":     pos.get("symbol", ""),
-        "type":       type_map.get(raw_type, "BUY"),
-        "volume":     float(pos.get("volume", pos.get("lots", 0.0))),
+        "type":       _position_direction(pos),
+        "volume":     _position_lots(pos) or 0.0,
         "open_price": float(pos.get("openPrice", pos.get("price_open", 0.0))),
         "sl":         float(pos.get("stopLoss",  pos.get("sl", 0.0))),
         "tp":         float(pos.get("takeProfit", pos.get("tp", 0.0))),

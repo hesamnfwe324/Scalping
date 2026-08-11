@@ -10,6 +10,7 @@ Endpoints used:
 """
 
 from dataclasses import dataclass
+import math
 from typing import Optional
 
 import aiohttp
@@ -34,6 +35,10 @@ def _normalise_lot(lot: float,
                    vol_min:  float = 0.01,
                    vol_step: float = 0.01,
                    vol_max:  float = 500.0) -> float:
+    if not math.isfinite(lot) or lot <= 0:
+        raise ValueError("lot size must be a finite positive number")
+    if vol_step <= 0 or vol_min <= 0 or vol_max < vol_min:
+        raise ValueError("invalid broker volume constraints")
     steps  = round((lot - vol_min) / vol_step)
     result = vol_min + steps * vol_step
     return max(vol_min, min(vol_max, round(result, 4)))
@@ -60,10 +65,19 @@ async def place_market_order(
     if not base or not conn_id:
         return TradeResult(False, None, "Not connected to mt5rest bridge")
 
-    lot       = _normalise_lot(lot_size)
-    operation = 0 if direction.upper() == "BUY" else 1   # 0=BUY  1=SELL
+    normalized_direction = direction.upper().strip()
+    if normalized_direction not in {"BUY", "SELL"}:
+        return TradeResult(False, None, f"Invalid trade direction: {direction!r}")
+    try:
+        lot = _normalise_lot(float(lot_size))
+    except (TypeError, ValueError) as exc:
+        return TradeResult(False, None, f"Invalid lot size: {exc}")
+    if not all(math.isfinite(float(value)) and float(value) > 0 for value in (sl, tp)):
+        return TradeResult(False, None, "Stop loss and take profit must be finite positive prices")
 
-    log.debug(f"Placing {direction} {lot} lots {symbol}  SL={sl}  TP={tp}")
+    operation = 0 if normalized_direction == "BUY" else 1   # 0=BUY  1=SELL
+
+    log.debug(f"Placing {normalized_direction} {lot} lots {symbol}  SL={sl}  TP={tp}")
 
     params = {
         "id":         conn_id,
@@ -95,7 +109,7 @@ async def place_market_order(
                 pos_id = str(ticket)
                 log.info(
                     f"Trade opened  ticket={pos_id}  "
-                    f"{direction} {lot} lots  SL={sl}  TP={tp}"
+                    f"{normalized_direction} {lot} lots  SL={sl}  TP={tp}"
                 )
                 return TradeResult(True, pos_id, "OK", pos_id)
 
