@@ -7,7 +7,7 @@ from typing import List, Literal, Optional
 from datetime import datetime, timezone
 from live_trading.signals.gold_engine import OHLCV
 from live_trading.signals.market_regime import calc_adx
-from live_trading.config import CONF_HARD_MIN, QUALITY_ADX_MIN
+from live_trading.config import CONF_HARD_MIN, QUALITY_ADX_MIN, STRUCTURE_MAX_AGE_BARS
 
 ALLOWED_SESSIONS = [
     (0,  7,  "MODERATE"),
@@ -19,7 +19,8 @@ ALLOWED_SESSIONS = [
 
 LATE_EXTENSION_MULT = 10.0
 MOMENTUM_BARS       = 5
-STALE_BAR_COUNT     = 300
+# Backwards-compatible alias; the max age is now bounded and configurable.
+STALE_BAR_COUNT     = STRUCTURE_MAX_AGE_BARS
 
 
 @dataclass
@@ -112,7 +113,7 @@ def _is_late_entry(candles: List[OHLCV], last_bos_bar: Optional[int]) -> bool:
             shrinking = all(bodies[i] <= bodies[i - 1] for i in range(1, len(bodies)))
             if shrinking:
                 return True
-    if last_bos_bar is not None and (n - 1) - last_bos_bar > STALE_BAR_COUNT:
+    if last_bos_bar is not None and (n - 1) - last_bos_bar > STRUCTURE_MAX_AGE_BARS:
         return True
     return False
 
@@ -172,7 +173,7 @@ def apply_quality_filter(
 
     late = _is_late_entry(candles, last_bos_bar)
     if late:
-        reasons.append("Late entry: price over-extended from EMA50 or BOS is stale")
+        reasons.append("Late entry: price over-extended from EMA50 or BOS/CHoCH is stale")
 
     # ADX momentum check — configurable via QUALITY_ADX_MIN env var (default 15).
     # Set higher (e.g. 20) for stricter momentum confirmation,
