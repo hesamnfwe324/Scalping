@@ -74,6 +74,11 @@ class MtfBias:
     regime:     str
     strength:   Literal["STRONG", "MODERATE", "WEAK"]
     reasoning:  List[str] = field(default_factory=list)
+    # Exposed for the H1 integrity gate to verify that the bias analyzer used
+    # the exact same closed-candle EMA values that were validated upstream.
+    ema50:      float = 0.0
+    ema100:     float = 0.0
+    ema200:     float = 0.0
 
 
 def _neutral(reason: str) -> MtfBias:
@@ -200,6 +205,9 @@ def compute_mtf_bias(htf_candles: List[OHLCV]) -> MtfBias:
         regime=regime.regime,
         strength=strength,
         reasoning=reasoning,
+        ema50=trend.ema50,
+        ema100=trend.ema100,
+        ema200=trend.ema200,
     )
 
 

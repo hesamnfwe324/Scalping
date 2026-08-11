@@ -50,6 +50,7 @@ from live_trading.risk.trailing_stop import (
 )
 from live_trading.signals.decision_engine import run_decision_engine, DecisionResult, describe_strategy
 from live_trading.signals.mtf_filter import compute_mtf_bias, mtf_allows_trade, MtfBias
+from live_trading.signals.h1_validator import validate_h1_candles
 from live_trading.signals.wyckoff_engine import calibrate_wyckoff, set_calibrated_config
 from live_trading.mt5.connector import (
     connect, disconnect, ensure_connected,
@@ -653,23 +654,50 @@ class GoldScalperLive:
         # fetch latency overlaps with the (slower) account info call that follows.
         # compute_mtf_bias() never raises; a bad fetch simply yields htf_bias=None.
         htf_bias: Optional[MtfBias] = None
+        htf_data_reason = ""
         if MTF_ENABLED:
             try:
                 htf_candles = await fetch_candles(SYMBOL, MTF_TIMEFRAME, MTF_CANDLE_WINDOW)
                 if len(htf_candles) >= 50:
-                    htf_bias = compute_mtf_bias(htf_candles)
-                    log.info(
-                        f"[{tf}] HTF ({MTF_TIMEFRAME}) bias: {htf_bias.direction}  "
-                        f"trend={htf_bias.trend}  smc={htf_bias.smc_signal}  "
-                        f"regime={htf_bias.regime}  strength={htf_bias.strength}"
-                    )
+                    # Option 1: H1 data and EMA integrity.  Keep this guard
+                    # scoped to H1 so no other timeframe strategy is changed.
+                    if MTF_TIMEFRAME in {"H1", "1h"}:
+                        h1_check = validate_h1_candles(htf_candles)
+                        if not h1_check.valid:
+                            htf_data_reason = h1_check.reason
+                            log.warning(f"[{tf}] {htf_data_reason} — blocking entry")
+                        else:
+                            candidate_bias = compute_mtf_bias(htf_candles)
+                            if not h1_check.matches_ema(
+                                candidate_bias.ema50,
+                                candidate_bias.ema100,
+                                candidate_bias.ema200,
+                            ):
+                                htf_data_reason = (
+                                    "H1 validation failed: EMA values changed between "
+                                    "validation and HTF analysis"
+                                )
+                                log.error(f"[{tf}] {htf_data_reason} — blocking entry")
+                            else:
+                                candidate_bias.reasoning.insert(0, h1_check.summary)
+                                htf_bias = candidate_bias
+                    else:
+                        htf_bias = compute_mtf_bias(htf_candles)
+
+                    if htf_bias is not None:
+                        log.info(
+                            f"[{tf}] HTF ({MTF_TIMEFRAME}) bias: {htf_bias.direction}  "
+                            f"trend={htf_bias.trend}  smc={htf_bias.smc_signal}  "
+                            f"regime={htf_bias.regime}  strength={htf_bias.strength}"
+                        )
                 else:
-                    log.warning(
-                        f"HTF candles insufficient ({len(htf_candles)}) "
-                        f"— MTF filter skipped this bar"
+                    htf_data_reason = (
+                        f"HTF candles insufficient ({len(htf_candles)})"
                     )
+                    log.warning(f"{htf_data_reason} — blocking entry")
             except Exception as _mtf_exc:
-                log.warning(f"MTF fetch/analysis error (fail-safe, skipping): {_mtf_exc}")
+                htf_data_reason = f"MTF fetch/analysis error (fail-safe): {_mtf_exc}"
+                log.warning(f"{htf_data_reason} — blocking entry")
 
         # 2. Account info (live, required for Guardian)
         acc_info = await get_account_info()
@@ -932,7 +960,7 @@ class GoldScalperLive:
                         "regime":    htf_bias.regime if htf_bias else "RANGE",
                         "strength":  htf_bias.strength if htf_bias else "WEAK",
                         "reasoning": htf_bias.reasoning if htf_bias else [
-                            "HTF bias unavailable — strict Option 2 block"
+                             htf_data_reason or "HTF bias unavailable — strict HTF block"
                         ],
                         "blocked":   _mtf_reason,
                     },
