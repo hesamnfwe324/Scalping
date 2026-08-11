@@ -176,10 +176,12 @@ def run_decision_engine(
     last_candle  = candles[-1]
     session      = get_session_quality(last_candle.time)
     divergence   = analyze_divergence(candles)
+    # Option 3: DXY is retained as telemetry only and cannot affect entry
+    # confidence or the decision. The confidence engine explicitly ignores
+    # this legacy compatibility argument.
     conf_result  = calc_confidence(
         smc, wyckoff, pa, trend, regime, session, candidate,
         divergence_signal=divergence.signal,
-        dxy_signal=dxy_signal,
     )
 
     if conf_result.confidence < CONF_HARD_MIN:
