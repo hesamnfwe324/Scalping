@@ -176,6 +176,10 @@ CONF_HARD_MIN     = _float("CONF_HARD_MIN",      28.0, lo=0.0, hi=100.0)
 # 15 is the recommended floor for M5 gold — catches genuine micro-trends
 # without blocking valid moves that ADX=20 would silently filter out.
 QUALITY_ADX_MIN   = _float("QUALITY_ADX_MIN",    15.0, lo=5.0,  hi=40.0)
+# Maximum age of the structure event that can authorize a new entry.
+# 300 bars on M5 is roughly 25 hours and is too permissive for scalping;
+# the default 24 closed bars keeps BOS/CHoCH actionable for about two hours.
+STRUCTURE_MAX_AGE_BARS = _int("STRUCTURE_MAX_AGE_BARS", 24, lo=3, hi=100)
 MAX_OPEN_TRADES   = 1
 
 USE_ATR_HIGH_VOL_FILTER = os.getenv("USE_ATR_HIGH_VOL_FILTER", "false").lower() == "true"

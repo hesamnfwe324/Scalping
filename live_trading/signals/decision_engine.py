@@ -9,6 +9,7 @@ from live_trading.signals.smc_engine import (
     SmcResult,
     analyze_smc_structure,
     detect_order_block_fake_breakout,
+    get_latest_structure_event,
 )
 from live_trading.signals.wyckoff_engine import WyckoffResult, analyze_wyckoff
 from live_trading.signals.price_action_engine import PriceActionResult, analyze_price_action
@@ -59,10 +60,11 @@ class DecisionResult:
 
 
 def _candidate_direction(smc: SmcResult) -> str:
-    if smc.choch_signals:
-        return smc.choch_signals[-1].type
-    if smc.bos_signals:
-        return smc.bos_signals[-1].type
+    # Use the newest event across both lists. Prioritising the last CHoCH
+    # unconditionally can resurrect an old reversal against a newer BOS.
+    latest_structure = get_latest_structure_event(smc)
+    if latest_structure is not None:
+        return latest_structure.type
     if smc.trend == "BULLISH": return "BUY"
     if smc.trend == "BEARISH": return "SELL"
     return "NEUTRAL"
@@ -200,9 +202,13 @@ def run_decision_engine(
         )
         return n
 
-    last_bos = smc.bos_signals[-1].bar_index if smc.bos_signals else None
+    latest_structure = get_latest_structure_event(smc)
+    last_structure_bar = (latest_structure.bar_index
+                          if latest_structure is not None else None)
+    # Feed the newest BOS/CHoCH bar through the existing quality-filter slot
+    # so both event types share the same freshness gate.
     quality  = apply_quality_filter(candles, candidate, conf_result.confidence,
-                                    last_bos, regime.adx, regime.atr_ratio)
+                                    last_structure_bar, regime.adx, regime.atr_ratio)
     if not quality.allowed:
         return DecisionResult(
             allowed=False, direction=candidate,  # type: ignore
