@@ -7,11 +7,14 @@ The live loop uses this bias as an additional trade gate:
 
   • Only BUY entries allowed when HTF bias is BUY.
   • Only SELL entries allowed when HTF bias is SELL.
-  • NEUTRAL bias → no filter applied (both directions pass through).
+  • NEUTRAL or RANGE HTF → entry blocked.
+  • An unavailable HTF bias → entry blocked (fail-closed).
+  • The entry must have at least 60% confidence and two confirmed
+    timeframes (the HTF plus the active entry timeframe).
 
 Design principles:
-  • Zero risk: any fetch/analysis error → NEUTRAL → trade is NOT blocked.
-    MTF failure can never stop a valid M5 trade; it only ever blocks bad ones.
+  • Safety first: any fetch/analysis error → NEUTRAL → trade is blocked.
+    A missing HTF confirmation must never be treated as approval.
   • Additive: zero changes to any existing signal engine or decision logic.
     This module is a pure add-on — it imports from the existing engines but
     never modifies them.
@@ -20,7 +23,7 @@ Design principles:
     than issuing a bias from SMC alone (SMC is noisier on higher timeframes
     without the EMA anchor).
   • Conflict suppression: if Trend and SMC actively disagree, bias = NEUTRAL.
-    A conflicted HTF means the market is transitioning — we do not filter.
+    A conflicted HTF means the market is transitioning — entry is blocked.
   • Configurable: MTF_ENABLED / MTF_TIMEFRAME / MTF_CANDLE_WINDOW env vars.
   • Transparent: all reasoning is recorded in MtfBias.reasoning for logging
     and panel display.
@@ -54,8 +57,8 @@ class MtfBias:
     HTF directional bias produced by compute_mtf_bias().
 
     direction : BUY | SELL | NEUTRAL
-        The bias to apply.  NEUTRAL means "no filter" — both M5 directions
-        are allowed.  Never treat NEUTRAL as bearish.
+        The bias to apply. NEUTRAL means the HTF has not approved a
+        directional entry and must block new trades.
 
     trend     : HTF EMA trend string (BULLISH / BEARISH / NEUTRAL).
     smc_signal: HTF SMC signal       (BUY / SELL / NEUTRAL).
@@ -88,7 +91,7 @@ def compute_mtf_bias(htf_candles: List[OHLCV]) -> MtfBias:
     """
     Derive the HTF directional bias from Trend + SMC + Regime analysis.
 
-    NEVER raises — any exception produces a NEUTRAL bias (fail-safe).
+    NEVER raises — any exception produces a NEUTRAL bias (fail-closed).
     Returns NEUTRAL when data is insufficient or engines conflict.
 
     Parameters
@@ -205,6 +208,10 @@ def compute_mtf_bias(htf_candles: List[OHLCV]) -> MtfBias:
 def mtf_allows_trade(
     bias: Optional[MtfBias],
     m5_direction: str,
+    confidence: Optional[float] = None,
+    confirmed_timeframes: int = 0,
+    min_confidence: float = 60.0,
+    min_timeframes: int = 2,
 ) -> tuple[bool, str]:
     """
     Check whether a proposed M5 trade is aligned with the HTF bias.
@@ -214,39 +221,67 @@ def mtf_allows_trade(
     bias          : MtfBias | None
         The result of compute_mtf_bias().  None is treated as NEUTRAL.
     m5_direction  : str
-        The M5 decision engine's proposed direction: "BUY", "SELL",
+        The active entry timeframe decision engine's proposed direction:
+        "BUY", "SELL",
         or "NEUTRAL".
+    confidence    : float | None
+        Entry confidence percentage. Required for a strict approval.
+    confirmed_timeframes : int
+        Number of distinct timeframes agreeing on the direction. The HTF and
+        active entry timeframe count as two when both agree.
+    min_confidence : float
+        Minimum confidence percentage required for entry.
+    min_timeframes : int
+        Minimum number of confirming timeframes required.
 
     Returns
     -------
     (allowed, reason)
-        allowed=True  → trade may proceed (HTF aligned or NEUTRAL).
+        allowed=True  → all Option 2 conditions are satisfied.
         allowed=False → caller should block the trade; reason explains why.
         When allowed=True, reason is an empty string.
 
     This function NEVER raises.
     """
-    # Fail-safe: no bias or NEUTRAL bias → always pass through
-    if bias is None or bias.direction == "NEUTRAL":
-        return True, ""
+    if bias is None:
+        return False, "MTF BLOCK: HTF bias unavailable — confirmation required"
 
-    # M5 direction NEUTRAL → no trade anyway; don't block explicitly
     if m5_direction == "NEUTRAL":
-        return True, ""
+        return False, "MTF BLOCK: entry direction is NEUTRAL"
 
-    if m5_direction == bias.direction:
-        return True, ""
+    if bias.direction == "NEUTRAL":
+        return (
+            False,
+            f"MTF BLOCK: HTF is NEUTRAL [trend={bias.trend}, "
+            f"regime={bias.regime}]",
+        )
 
-    # Only block when the opposing HTF bias is STRONG.
-    # A MODERATE or WEAK opposing bias means the HTF is transitioning or
-    # uncertain — blocking in that case eliminates valid M5 setups.
-    # A STRONG opposing bias means HTF trend is clearly against the trade.
-    if bias.strength != "STRONG":
-        return True, ""   # MODERATE / WEAK opposing → pass through
+    if bias.regime == "RANGE":
+        return False, "MTF BLOCK: HTF regime is RANGE — entry prohibited"
 
-    reason = (
-        f"MTF BLOCK: M5 wants {m5_direction} but HTF is STRONGLY {bias.direction} "
-        f"[trend={bias.trend}, SMC={bias.smc_signal}, "
-        f"regime={bias.regime}, strength={bias.strength}]"
-    )
-    return False, reason
+    if m5_direction != bias.direction:
+        return (
+            False,
+            f"MTF BLOCK: entry wants {m5_direction} but HTF confirms "
+            f"{bias.direction} [trend={bias.trend}, SMC={bias.smc_signal}, "
+            f"regime={bias.regime}, strength={bias.strength}]",
+        )
+
+    if confidence is None:
+        return False, "MTF BLOCK: confidence is unavailable"
+
+    if confidence < min_confidence:
+        return (
+            False,
+            f"MTF BLOCK: confidence {confidence:.1f}% < "
+            f"{min_confidence:.1f}% minimum",
+        )
+
+    if confirmed_timeframes < min_timeframes:
+        return (
+            False,
+            f"MTF BLOCK: only {confirmed_timeframes} timeframe "
+            f"confirmation(s); {min_timeframes} required",
+        )
+
+    return True, ""

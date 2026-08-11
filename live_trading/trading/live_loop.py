@@ -39,6 +39,7 @@ from live_trading.config import (
     TRAIL_ENABLED, TRAIL_ACTIVATION_R, TRAIL_STEP_R,
     TRAIL_LOCK_BUFFER_R, TRAIL_ATR_GAP_MULT, TRAIL_MIN_STEP_PRICE,
     MTF_ENABLED, MTF_TIMEFRAME, MTF_CANDLE_WINDOW,
+    OPTION_TWO_MIN_CONFIDENCE, OPTION_TWO_MIN_TIMEFRAMES,
     TRADE_TIMEFRAMES,
 )
 from live_trading.logger import get_logger
@@ -826,23 +827,33 @@ class GoldScalperLive:
             )
             return
 
-        # 8b. Gate: Multi-Timeframe alignment
-        # Only runs when decision.allowed=True (we never block an already-rejected
-        # trade with extra noise).  mtf_allows_trade() is a pure function that
-        # never raises and returns (True, "") when htf_bias is None or NEUTRAL.
-        if MTF_ENABLED and htf_bias is not None:
-            _mtf_ok, _mtf_reason = mtf_allows_trade(htf_bias, decision.direction)
+        # 8b. Gate: Option 2 strict HTF confirmation.
+        # A valid entry needs both the active entry timeframe and the HTF to
+        # agree, at least 60% confidence, and a non-RANGE directional HTF.
+        # This is deliberately fail-closed: a fetch/analysis failure produces
+        # htf_bias=None and therefore cannot accidentally open a trade.
+        if MTF_ENABLED:
+            _mtf_ok, _mtf_reason = mtf_allows_trade(
+                htf_bias,
+                decision.direction,
+                confidence=decision.confidence,
+                confirmed_timeframes=2 if htf_bias is not None else 0,
+                min_confidence=OPTION_TWO_MIN_CONFIDENCE,
+                min_timeframes=OPTION_TWO_MIN_TIMEFRAMES,
+            )
             if not _mtf_ok:
                 log.info(f"⛔  {_mtf_reason}")
                 _mtf_extra = {
                     **self._guardian_extra(gs),
                     "htf_bias": {
-                        "direction": htf_bias.direction,
-                        "trend":     htf_bias.trend,
-                        "smc":       htf_bias.smc_signal,
-                        "regime":    htf_bias.regime,
-                        "strength":  htf_bias.strength,
-                        "reasoning": htf_bias.reasoning,
+                        "direction": htf_bias.direction if htf_bias else "NEUTRAL",
+                        "trend":     htf_bias.trend if htf_bias else "NEUTRAL",
+                        "smc":       htf_bias.smc_signal if htf_bias else "NEUTRAL",
+                        "regime":    htf_bias.regime if htf_bias else "RANGE",
+                        "strength":  htf_bias.strength if htf_bias else "WEAK",
+                        "reasoning": htf_bias.reasoning if htf_bias else [
+                            "HTF bias unavailable — strict Option 2 block"
+                        ],
                         "blocked":   _mtf_reason,
                     },
                 }

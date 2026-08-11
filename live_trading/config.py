@@ -194,6 +194,11 @@ USE_ATR_HIGH_VOL_FILTER = os.getenv("USE_ATR_HIGH_VOL_FILTER", "false").lower() 
 MTF_ENABLED       = os.getenv("MTF_ENABLED",   "true").lower() == "true"
 MTF_TIMEFRAME     = _timeframe("MTF_TIMEFRAME",  "H1")
 MTF_CANDLE_WINDOW = _int("MTF_CANDLE_WINDOW",    300, lo=50, hi=1000)
+# Option 2: a trade needs a real HTF confirmation, a matching entry
+# timeframe, and at least 60% confidence. These are intentionally strict
+# production defaults; changing them requires an explicit Render env override.
+OPTION_TWO_MIN_CONFIDENCE = _float("OPTION_TWO_MIN_CONFIDENCE", 60.0, lo=0.0, hi=100.0)
+OPTION_TWO_MIN_TIMEFRAMES = _int("OPTION_TWO_MIN_TIMEFRAMES", 2, lo=2, hi=10)
 
 # ── Trade Timeframes (Multi-Timeframe entry) ─────────────────────────────────
 # Comma-separated list of timeframes the robot will watch for new bars and
