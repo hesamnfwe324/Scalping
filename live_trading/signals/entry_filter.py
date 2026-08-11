@@ -26,6 +26,7 @@ def apply_entry_filter(
     wyckoff_signal: str,
     min_confirmations: int = MIN_CONFIRMATIONS,
     require_price_action: bool = False,
+    require_smc_price_action_wyckoff: bool = False,
 ) -> EntryFilterResult:
 
     blocked = EntryFilterResult(
@@ -46,7 +47,13 @@ def apply_entry_filter(
     wyc_ok   = wyckoff_signal == direction
 
     count = sum([smc_ok, trend_ok, pa_ok, wyc_ok])
-    allowed = count >= min_confirmations and (not require_price_action or pa_ok)
+    if require_smc_price_action_wyckoff:
+        # Exact option 1: EMA is deliberately not part of the required gate.
+        allowed = smc_ok and pa_ok and wyc_ok
+    else:
+        allowed = count >= min_confirmations and (
+            not require_price_action or pa_ok
+        )
 
     return EntryFilterResult(
         allowed=allowed,

@@ -15,7 +15,10 @@ from live_trading.signals.quality_filter import QualityFilterResult, apply_quali
 from live_trading.signals.entry_filter import apply_entry_filter, EntryFilterResult
 from live_trading.signals.divergence_engine import analyze_divergence, DivergenceResult
 from live_trading.risk.capital_manager import CapitalInput, CapitalOutput, calc_trade_parameters
-from live_trading.config import CONF_HARD_MIN
+from live_trading.config import (
+    CONF_HARD_MIN,
+    REQUIRE_SMC_PRICE_ACTION_WYCKOFF,
+)
 
 # Marginal confidence R:R floor: trades with confidence between CONF_HARD_MIN
 # and the regime minimum must still achieve this R:R to be allowed.
@@ -91,6 +94,7 @@ def run_decision_engine(
     use_atr_high_vol:  bool  = False,
     dxy_signal:        str   = "NEUTRAL",
     require_price_action: bool = False,
+    require_smc_price_action_wyckoff: bool = REQUIRE_SMC_PRICE_ACTION_WYCKOFF,
 ) -> DecisionResult:
 
     smc     = analyze_smc_structure(candles)
@@ -135,13 +139,22 @@ def run_decision_engine(
         wyckoff_signal  = wyckoff.wyckoff_signal,
         min_confirmations = effective_min_confirmations,
         require_price_action = require_price_action,
+        require_smc_price_action_wyckoff = require_smc_price_action_wyckoff,
     )
     if not ef.allowed:
         votes = (f"SMC={'✓' if ef.smc else '✗'}  "
                  f"Trend={'✓' if ef.trend else '✗'}  "
                  f"PA={'✓' if ef.price_action else '✗'}  "
                  f"Wyckoff={'✓' if ef.wyckoff else '✗'}")
-        if require_price_action and not ef.price_action:
+        if (
+            require_smc_price_action_wyckoff
+            and not (ef.smc and ef.price_action and ef.wyckoff)
+        ):
+            reason = (
+                "Entry filter: Option 1 requires SMC + Price Action + Wyckoff — "
+                f"{votes}  [regime={regime.regime}]"
+            )
+        elif require_price_action and not ef.price_action:
             reason = (f"Entry filter: Price Action confirmation required — "
                       f"{votes}  [regime={regime.regime}]")
         else:
