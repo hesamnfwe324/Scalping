@@ -76,6 +76,27 @@ _MT5_KEEPALIVE_INTERVAL_S:    float = 180.0    # 3 min  — keep broker session 
 _MT5_SESSION_REFRESH_AGE_S:   float = 14400.0  # 4 hours — proactively refresh conn_id
 
 
+def _connect_params(user: str, password: str, host: str) -> dict[str, object]:
+    """Build query parameters accepted by mt5rest's ConnectEx endpoint.
+
+    aiohttp encodes query parameters through ``str()`` for most values, but
+    mt5rest validates the values before routing and rejects Python booleans
+    with HTTP 500. Keep the flags as explicit lowercase query-string values
+    so the request is valid for both the current bridge and older versions.
+    """
+    return {
+        "user": user,
+        "password": password,
+        "server": host,
+        "connectTimeoutSeconds": 60,
+        # The panel's trade history is backed by the same MT5 session. Ask
+        # mt5rest to download it during ConnectEx so closed trades are
+        # available immediately after reconnects.
+        "downloadOrderHistory": "true",
+        "reconnectOnSymbolUpdate": "true",
+    }
+
+
 def _get_reconnect_lock() -> asyncio.Lock:
     """Lazily create the reconnect lock on the running event loop."""
     global _reconnect_lock
@@ -133,17 +154,7 @@ async def connect(*args, **kwargs) -> bool:
         log.info(f"Connecting to MT5 via mt5rest at {base} ...")
         async with sess.get(
             f"{base}/ConnectEx",
-            params={
-                "user":     user,
-                "password": password,
-                "server":   host,
-                "connectTimeoutSeconds": 60,
-                # The panel's trade history is backed by the same MT5
-                # session.  Ask mt5rest to download it during ConnectEx so
-                # closed trades are available immediately after reconnects.
-                "downloadOrderHistory": True,
-                "reconnectOnSymbolUpdate": True,
-            },
+            params=_connect_params(user, password, host),
             timeout=aiohttp.ClientTimeout(total=SYNC_TIMEOUT),
         ) as resp:
             raw = await resp.text()
