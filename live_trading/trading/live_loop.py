@@ -1221,11 +1221,39 @@ class GoldScalperLive:
         # New: manual Guardian reset from Telegram panel
         if cmds.get("reset_guardian"):
             log.warning("🛡️  Guardian reset requested from Telegram")
-            self.guardian.reset_halt()
-            if self.paused:
+            reset_payload = cmds.get("reset_guardian")
+            reset_daily_baseline = (
+                isinstance(reset_payload, dict)
+                and bool(reset_payload.get("reset_daily_baseline"))
+            )
+            current_balance = None
+            if reset_daily_baseline:
+                if self._last_acc_info:
+                    current_balance = self._last_acc_info.get("balance")
+                if current_balance is None:
+                    try:
+                        fresh_account = await get_account_info()
+                        current_balance = fresh_account.get("balance") if fresh_account else None
+                        if fresh_account:
+                            self._last_acc_info = fresh_account
+                    except Exception as exc:
+                        log.warning(
+                            f"Could not fetch live balance for daily reset: {exc}"
+                        )
+
+            reset_ok = self.guardian.reset_halt(
+                reset_daily_baseline=reset_daily_baseline,
+                current_balance=float(current_balance) if current_balance is not None else None,
+            )
+            if reset_ok and self.paused:
                 self.paused = False
                 log.info("▶  Robot RESUMED after Guardian reset")
                 self._write_state("RUNNING")
+            elif not reset_ok:
+                log.warning(
+                    "🛡️  Guardian reset did not resume robot because "
+                    "the daily baseline could not be reset"
+                )
             clear_command("reset_guardian")
 
         # "start" — sent by Telegram panel Start button.

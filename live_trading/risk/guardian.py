@@ -185,12 +185,32 @@ class RiskGuardian:
             drawdown_pct = drawdown,
         )
 
-    def reset_halt(self) -> None:
+    def reset_halt(self, *, reset_daily_baseline: bool = False,
+                   current_balance: float | None = None) -> bool:
         """
         Manually clear a halt.
         Exposed to Telegram panel via /reset_guardian command.
         Use with caution — understand WHY the halt triggered first.
+
+        When ``reset_daily_baseline`` is requested, ``current_balance`` must
+        be a positive live account balance.  This intentionally resets only
+        the UTC-day loss window; the session equity high-water mark is kept so
+        the max-drawdown circuit breaker remains effective.
         """
+        if reset_daily_baseline:
+            if current_balance is None or current_balance <= 0:
+                log.warning(
+                    "🛡️  Daily baseline reset rejected — "
+                    "live balance is unavailable or invalid"
+                )
+                return False
+            self._day_open_balance = float(current_balance)
+            self._last_day = datetime.now(timezone.utc).date()
+            log.warning(
+                "🛡️  Daily loss baseline RESET to current balance "
+                f"{self._day_open_balance:.2f}"
+            )
+
         log.warning(
             "🛡️  Guardian halt MANUALLY CLEARED — "
             "previous reason: " + (self._halt_reason or "none")
@@ -200,6 +220,7 @@ class RiskGuardian:
         self._triggered_at = None
         self._halt_log_count = 0
         self._save_state()
+        return True
 
     def set_account_identity(self, login: str, server: str) -> None:
         """Set account identity used to validate persisted state on restore."""
