@@ -117,6 +117,56 @@ class SmcResult:
     smc_score: float
 
 
+def detect_order_block_fake_breakout(
+    candles: List[OHLCV],
+    smc: SmcResult,
+    direction: str,
+    retrace_bars: int = 3,
+) -> Optional[SmcOrderBlock]:
+    """Return the direction-aligned OB involved in a fake breakout.
+
+    A bullish setup is rejected when a recently closed candle closed above a
+    bullish OB and the latest closed candle has returned inside that block.
+    The bearish case is the mirror image.  Both active and recently mitigated
+    blocks are considered because a return into a block is exactly what marks
+    it as mitigated in the SMC detector.
+
+    This is deliberately a hard entry guard, not another confidence bonus or
+    penalty.  It only evaluates closed candles and only looks back a small,
+    bounded number of bars, so an old OB cannot block a fresh setup by itself.
+    """
+    if direction not in {"BUY", "SELL"} or len(candles) < 2:
+        return None
+
+    current = candles[-1]
+    recent_start = max(0, len(candles) - retrace_bars - 1)
+    recent = candles[recent_start:-1]
+    if not recent:
+        return None
+
+    expected_type = "BULLISH" if direction == "BUY" else "BEARISH"
+    blocks: List[SmcOrderBlock] = list(smc.order_blocks)
+    blocks.extend(m.original_ob for m in smc.mitigation_blocks)
+
+    seen: Set[tuple[str, int]] = set()
+    for ob in blocks:
+        key = (ob.type, ob.bar_index)
+        if key in seen or ob.type != expected_type:
+            continue
+        seen.add(key)
+
+        current_inside = ob.low <= current.close <= ob.high
+        if not current_inside:
+            continue
+
+        if direction == "BUY" and any(c.close > ob.high for c in recent):
+            return ob
+        if direction == "SELL" and any(c.close < ob.low for c in recent):
+            return ob
+
+    return None
+
+
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _candle_body(c: OHLCV) -> float:

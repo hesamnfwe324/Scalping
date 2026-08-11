@@ -5,7 +5,11 @@ Ported from decisionEngine.ts
 from dataclasses import dataclass, field
 from typing import List, Literal, Optional
 from live_trading.signals.gold_engine import OHLCV
-from live_trading.signals.smc_engine import SmcResult, analyze_smc_structure
+from live_trading.signals.smc_engine import (
+    SmcResult,
+    analyze_smc_structure,
+    detect_order_block_fake_breakout,
+)
 from live_trading.signals.wyckoff_engine import WyckoffResult, analyze_wyckoff
 from live_trading.signals.price_action_engine import PriceActionResult, analyze_price_action
 from live_trading.signals.trend_engine import TrendResult, analyze_trend
@@ -206,6 +210,35 @@ def run_decision_engine(
             blocked_reasons=quality.blocked_reasons, reasoning=conf_result.reasoning,
             trade_params=None, smc=smc, wyckoff=wyckoff, pa=pa, trend=trend,
             entry_filter=ef,
+        )
+
+    # Option 2 hard gate: a directional breakout that closes back inside its
+    # aligned Order Block is treated as a fake breakout.  Do not let this
+    # setup reach capital sizing or the order executor.  The existing quality
+    # result is reused so the panel receives the normal filter telemetry plus
+    # the explicit rejection flag.
+    fake_ob = detect_order_block_fake_breakout(candles, smc, candidate)
+    if fake_ob is not None:
+        fake_reason = (
+            f"Fake Breakout in {fake_ob.type.title()} Order Block "
+            f"[{fake_ob.low:.2f}, {fake_ob.high:.2f}] — entry blocked"
+        )
+        quality.allowed = False
+        quality.is_fake_breakout = True
+        quality.blocked_reasons.append(fake_reason)
+        return DecisionResult(
+            allowed=False, direction=candidate,  # type: ignore
+            confidence=conf_result.confidence, components=conf_result.components,
+            grade=conf_result.grade, regime=regime.regime,
+            regime_label=regime.rules.label, regime_rules=regime.rules,
+            quality_filter=quality,
+            blocked_reasons=[fake_reason],
+            reasoning=conf_result.reasoning + [fake_reason],
+            trade_params=None,
+            smc=smc, wyckoff=wyckoff, pa=pa, trend=trend,
+            entry_filter=ef,
+            divergence=divergence,
+            dxy_signal=dxy_signal,
         )
 
     # Capital manager inputs
