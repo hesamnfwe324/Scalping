@@ -34,7 +34,9 @@ class QualityFilterResult:
     is_fake_breakout: bool
     is_weak_volume: bool
     is_low_momentum: bool
-    is_news_blocked: bool = False   # must be last — it has a default value
+    # Retained for state/panel compatibility. News is intentionally inactive
+    # on the live entry path.
+    is_news_blocked: bool = False
 
 
 def get_session_quality(iso_timestamp: str) -> Literal["PRIME", "MODERATE", "BLOCKED"]:
@@ -151,22 +153,10 @@ def apply_quality_filter(
     reasons = []
     last_candle = candles[-1]
 
-    # ── News event blackout — highest priority ────────────────────────────────
-    if news_blocked:
-        reasons.append(news_reason or "High-impact USD news event blackout")
-        return QualityFilterResult(
-            allowed=False,
-            blocked_reasons=reasons,
-            session_quality=get_session_quality(last_candle.time),
-            adx=adx if adx is not None else 0.0,
-            is_severe_range=False,
-            is_late_entry=False,
-            is_low_probability=False,
-            is_fake_breakout=False,
-            is_weak_volume=False,
-            is_low_momentum=False,
-            is_news_blocked=True,
-        )
+    # Option 3: News Filter is intentionally not evaluated on the entry path.
+    # Keep these legacy parameters so older callers remain source-compatible;
+    # the values are deliberately ignored. The news module remains available
+    # for non-entry telemetry/UI use.
 
     # C-2 FIX: respect BLOCKED sessions — do not override to MODERATE.
     # BLOCKED hours represent illiquid periods where slippage and false

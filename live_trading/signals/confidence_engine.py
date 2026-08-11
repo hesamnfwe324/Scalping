@@ -22,7 +22,9 @@ class ConfidenceComponents:
     volatility_score: float   # 0–5
     total:            float   # 0–100
     divergence_score: float = 0.0  # 0–10 bonus (RSI/MACD divergence)
-    dxy_score:        float = 0.0  # –5 to +5 (DXY correlation bonus/penalty)
+    # Retained for panel/backward-compatible payloads. DXY is intentionally
+    # inactive in entry confidence scoring.
+    dxy_score:        float = 0.0
 
 
 @dataclass
@@ -249,7 +251,10 @@ def calc_confidence(
     vol_s,  vol_r  = _calc_volatility_score(regime, session)
 
     div_s, div_r = _calc_divergence_score(divergence_signal, candidate)
-    dxy_s, dxy_r = _calc_dxy_score(dxy_signal, candidate)
+    # Option 3: DXY must not influence entry confidence in either direction.
+    # Keep the argument for compatibility with existing callers and telemetry,
+    # but deliberately do not evaluate it here.
+    dxy_s, dxy_r = 0.0, []
 
     raw_total  = smc_s + tr_s + pa_s + wy_s + liq_s + vol_s + div_s + dxy_s
     total_capped = round(min(100.0, max(0.0, raw_total)), 1)
