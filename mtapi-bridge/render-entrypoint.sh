@@ -68,6 +68,12 @@ _SELF_KEEPALIVE_INTERVAL=480  # 8 minutes — well under Render's 15-min thresho
 # Wine startup failures can exit with code 0 within seconds; real shutdowns always
 # come after the service has been running (i.e. > 5 minutes).
 _MIN_UPTIME_S=300
+# Avoid a tight Wine/.NET restart loop when the host briefly exhausts a shared
+# kernel resource such as inotify instances. Bounded backoff gives the child
+# time to release resources before the next startup attempt.
+_CRASH_BACKOFF_MIN=5
+_CRASH_BACKOFF_MAX=120
+_CRASH_BACKOFF=$_CRASH_BACKOFF_MIN
 
 if [ "$_PORT" != "80" ]; then
     echo "[render-entrypoint] Render PORT=${_PORT} detected — starting socat proxy: ${_PORT} → 80"
@@ -142,6 +148,13 @@ while true; do
     _ITER_END=$(date +%s)
     _UPTIME=$((_ITER_END - _ITER_START))
 
+    # After a minute the process has completed its cold start. If it later
+    # exits, restart with the short delay again; repeated early crashes use
+    # exponential backoff.
+    if [ "$_UPTIME" -ge 60 ]; then
+        _CRASH_BACKOFF=$_CRASH_BACKOFF_MIN
+    fi
+
     if [ "$_EXIT" -eq 0 ] && [ "$_UPTIME" -ge "$_MIN_UPTIME_S" ]; then
         # Only treat code=0 as a clean intentional shutdown when the process
         # ran for at least MIN_UPTIME_S seconds.  This distinguishes a real
@@ -152,9 +165,16 @@ while true; do
     fi
 
     if [ "$_EXIT" -eq 0 ]; then
-        echo "[render-entrypoint] mt5rest exited code=0 but uptime=${_UPTIME}s < ${_MIN_UPTIME_S}s — treating as Wine startup crash, restarting in 5s..."
+        echo "[render-entrypoint] mt5rest exited code=0 but uptime=${_UPTIME}s < ${_MIN_UPTIME_S}s — treating as Wine startup crash, restarting in ${_CRASH_BACKOFF}s..."
     else
-        echo "[render-entrypoint] mt5rest exited (code=${_EXIT}, uptime=${_UPTIME}s) — Wine/dotnet crash detected, restarting in 5s..."
+        echo "[render-entrypoint] mt5rest exited (code=${_EXIT}, uptime=${_UPTIME}s) — Wine/dotnet crash detected, restarting in ${_CRASH_BACKOFF}s..."
     fi
-    sleep 5
+    sleep "$_CRASH_BACKOFF"
+    if [ "$_CRASH_BACKOFF" -lt "$_CRASH_BACKOFF_MAX" ]; then
+        _NEXT_BACKOFF=$((_CRASH_BACKOFF * 2))
+        if [ "$_NEXT_BACKOFF" -gt "$_CRASH_BACKOFF_MAX" ]; then
+            _NEXT_BACKOFF=$_CRASH_BACKOFF_MAX
+        fi
+        _CRASH_BACKOFF=$_NEXT_BACKOFF
+    fi
 done

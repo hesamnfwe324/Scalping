@@ -34,6 +34,12 @@ RUN apt-get update -qq \
 # ── Stage 2: final mt5rest image with Render PORT proxy ───────────────────────
 FROM timurila/mt5rest:26.07.22-06.37
 
+# mt5rest/.NET watches its JSON configuration files for reloads. Render's
+# shared container limit can exhaust inotify instances during Wine/.NET
+# restarts, which otherwise crashes the bridge before it can expose /Ping.
+# Polling removes that host-level dependency without changing MT5 behaviour.
+ENV DOTNET_USE_POLLING_FILE_WATCHER=1
+
 # Copy socat binary and its one missing runtime dependency (libwrap.so.0).
 # Paths are from ubuntu:20.04 where libs live under /lib, not /usr/lib.
 COPY --from=socat-source /usr/bin/socat                              /usr/local/bin/socat
