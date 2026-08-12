@@ -990,7 +990,7 @@ class GoldScalperLive:
 
         # 8b. Gate: Option 2 strict HTF confirmation.
         # A valid entry needs both the active entry timeframe and the HTF to
-        # agree, at least 60% confidence, and a non-RANGE directional HTF.
+        # agree, at least 49% confidence, and a non-RANGE directional HTF.
         # This is deliberately fail-closed: a fetch/analysis failure produces
         # htf_bias=None and therefore cannot accidentally open a trade.
         if MTF_ENABLED:

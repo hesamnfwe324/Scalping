@@ -112,6 +112,7 @@ Full reference with descriptions: [`live_trading/.env.example`](live_trading/.en
 | `RISK_PERCENT` | No | `1.0` | Risk per trade (% of balance) |
 | `MIN_CONFIRMATIONS` | No | `2` | Min signal confirmations (SMC always required + N of Trend/PA/Wyckoff) |
 | `CONF_HARD_MIN` | No | `32` | Confidence-engine hard floor |
+| `OPTION_TWO_MIN_CONFIDENCE` | No | `49` | MTF confidence floor for the HTF-confirmed entry gate |
 | `QUALITY_ADX_MIN` | No | `12` | Quality filter ADX floor |
 | `DAILY_LOSS_LIMIT_PCT` | No | `4.0` | Guardian: daily loss halt threshold |
 | `MAX_DRAWDOWN_PCT` | No | `12.0` | Guardian: drawdown halt threshold |

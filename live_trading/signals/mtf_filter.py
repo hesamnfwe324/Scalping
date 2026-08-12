@@ -9,7 +9,7 @@ The live loop uses this bias as an additional trade gate:
   • Only SELL entries allowed when HTF bias is SELL.
   • NEUTRAL or RANGE HTF → entry blocked.
   • An unavailable HTF bias → entry blocked (fail-closed).
-  • The entry must have at least 60% confidence and two confirmed
+  • The entry must have at least 49% confidence and two confirmed
     timeframes (the HTF plus the active entry timeframe).
 
 Design principles:
@@ -224,7 +224,7 @@ def mtf_allows_trade(
     m5_direction: str,
     confidence: Optional[float] = None,
     confirmed_timeframes: int = 0,
-    min_confidence: float = 60.0,
+    min_confidence: float = 49.0,
     min_timeframes: int = 2,
 ) -> tuple[bool, str]:
     """

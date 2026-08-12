@@ -68,7 +68,7 @@ services:
         value: "300"
       # Option 2: keep the strict HTF confidence floor reproducible from the live Render environment.
       - key: OPTION_TWO_MIN_CONFIDENCE
-        value: "55"
+        value: "49"
       # Option 4: old BOS/CHoCH events cannot authorize live entries.
       - key: STRUCTURE_MAX_AGE_BARS
         value: "24"

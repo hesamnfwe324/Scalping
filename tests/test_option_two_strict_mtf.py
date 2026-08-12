@@ -17,15 +17,15 @@ def _bias(
     )
 
 
-def test_option_two_allows_aligned_entry_at_exact_confidence_floor():
+def test_option_two_allows_aligned_entry_at_exact_49_percent_floor():
     assert mtf_allows_trade(
-        _bias(), "BUY", confidence=60.0, confirmed_timeframes=2
+        _bias(), "BUY", confidence=49.0, confirmed_timeframes=2
     ) == (True, "")
 
 
-def test_option_two_blocks_confidence_below_sixty_percent():
+def test_option_two_blocks_confidence_below_49_percent():
     allowed, reason = mtf_allows_trade(
-        _bias(), "BUY", confidence=59.9, confirmed_timeframes=2
+        _bias(), "BUY", confidence=48.9, confirmed_timeframes=2
     )
     assert not allowed
     assert "confidence" in reason.lower()

@@ -32,7 +32,7 @@ class StrategyConfig:
     spread_filter_enabled: bool = True
 
     # Thresholds
-    min_confidence_score: float = 60.0
+    min_confidence_score: float = 49.0
     min_rr_ratio: float = 2.0
 
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))

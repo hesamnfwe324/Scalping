@@ -102,7 +102,7 @@ CREATE TABLE IF NOT EXISTS strategy_configs (
     news_filter_enabled INTEGER NOT NULL DEFAULT 1,
     time_filter_enabled INTEGER NOT NULL DEFAULT 1,
     spread_filter_enabled INTEGER NOT NULL DEFAULT 1,
-    min_confidence_score REAL NOT NULL DEFAULT 60.0,
+    min_confidence_score REAL NOT NULL DEFAULT 49.0,
     min_rr_ratio REAL NOT NULL DEFAULT 2.0,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
@@ -235,9 +235,24 @@ class Database:
         async with aiosqlite.connect(self._path) as db:
             db.row_factory = aiosqlite.Row
             await db.executescript(_SCHEMA_SQL)
+            # Migrate only the old built-in default. Any operator-selected
+            # threshold (including values other than 60) is preserved.
+            cursor = await db.execute(
+                """
+                UPDATE strategy_configs
+                   SET min_confidence_score = 49.0
+                 WHERE min_confidence_score = 60.0
+                """
+            )
+            migrated_rows = cursor.rowcount
             await db.commit()
 
         self._initialized = True
+        if migrated_rows:
+            logger.info(
+                "Migrated %s legacy strategy confidence default(s) from 60.0 to 49.0",
+                migrated_rows,
+            )
         logger.info(f"Database initialized at: {self._path}")
 
     @asynccontextmanager
