@@ -42,6 +42,13 @@ _DEFAULT_STATE: dict[str, Any] = {
     "vps_status": "unknown",
     "active_trades": 0,
     "pending_orders": 0,
+    # Signal eligibility and final trade permission are different concepts.
+    # Default closed so a missing/stale field can never authorize an entry.
+    "trade_permission": {
+        "allowed": False,
+        "stage": "NOT_EVALUATED",
+        "reasons": ["No live entry gate evaluation yet"],
+    },
     "last_error": None,
 }
 
@@ -191,6 +198,22 @@ class RobotService:
         except ValueError:
             return ConnectionStatus.DISCONNECTED
 
+    async def get_trade_permission(self) -> dict[str, Any]:
+        """Return final live entry permission, never the signal's ``allowed``."""
+        state = await self._read_state()
+        permission = state.get("trade_permission")
+        if not isinstance(permission, dict):
+            return dict(_DEFAULT_STATE["trade_permission"])
+        return {
+            "allowed": bool(permission.get("allowed", False)),
+            "stage": str(permission.get("stage", "NOT_EVALUATED")),
+            "reasons": [
+                str(reason)
+                for reason in permission.get("reasons", [])
+                if str(reason).strip()
+            ],
+        }
+
     async def get_config(self) -> dict[str, Any]:
         try:
             loop = asyncio.get_running_loop()
@@ -308,6 +331,19 @@ class RobotService:
         the heartbeat monitor never fires RUNNING events, and the dashboard always shows ⚪.
         """
         out = dict(state)
+        permission = out.get("trade_permission")
+        if not isinstance(permission, dict):
+            out["trade_permission"] = dict(_DEFAULT_STATE["trade_permission"])
+        else:
+            out["trade_permission"] = {
+                "allowed": bool(permission.get("allowed", False)),
+                "stage": str(permission.get("stage", "NOT_EVALUATED")),
+                "reasons": [
+                    str(reason)
+                    for reason in permission.get("reasons", [])
+                    if str(reason).strip()
+                ],
+            }
         for key in ("status", "mt5_status", "connection_status"):
             if key in out and isinstance(out[key], str):
                 out[key] = out[key].lower()

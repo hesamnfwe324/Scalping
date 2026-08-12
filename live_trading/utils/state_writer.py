@@ -113,6 +113,7 @@ def write_robot_state(
     loop_count:        int,
     last_signal_time:  Optional[str] = None,
     extra:             Optional[dict] = None,
+    trade_permission:  Optional[dict] = None,
 ) -> None:
 
     pos_data = None
@@ -132,7 +133,11 @@ def write_robot_state(
     dec_data = None
     if decision:
         dec_data = {
+            # `allowed` is the legacy strategy-signal field.  It describes
+            # whether the signal engine found an entry setup; it is not the
+            # final permission to send an order.
             "allowed":    decision.allowed,
+            "signal_allowed": decision.allowed,
             "direction":  decision.direction,
             "confidence": decision.confidence,
             "grade":      decision.grade,
@@ -253,6 +258,13 @@ def write_robot_state(
         "today_profit":     round(_today_profit, 2),
         "open_position":    pos_data,
         "last_decision":    dec_data,
+        # Kept separate from last_decision.allowed so panel consumers cannot
+        # confuse a signal with a fully evaluated, live entry permission.
+        "trade_permission": trade_permission or {
+            "allowed": False,
+            "stage": "NOT_EVALUATED",
+            "reasons": ["No live entry gate evaluation yet"],
+        },
         "recent_trades":    trade_history[-MAX_TRADE_HISTORY:],
         "trade_count":      len(trade_history),
     }

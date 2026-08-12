@@ -190,6 +190,14 @@ class GoldScalperLive:
         self._last_entry_direction: str = ""
         self.trade_history: List[dict] = []
         self.last_decision: Optional[DecisionResult] = None
+        # This is deliberately independent from DecisionResult.allowed.
+        # The decision engine reports signal eligibility; this state records
+        # the result of every live entry gate before an order is sent.
+        self._last_trade_permission: dict = {
+            "allowed": False,
+            "stage": "NOT_EVALUATED",
+            "reasons": ["No live entry gate evaluation yet"],
+        }
         self._close_history_checked_at: dict[str, float] = {}
         self._open_position_snapshot_initialized = False
 
@@ -468,6 +476,11 @@ class GoldScalperLive:
         try:
             while self.running:
                 _checkpoint(f"loop#{self.loop_count} tick start")
+                self._set_trade_permission(
+                    False,
+                    "NOT_EVALUATED",
+                    ["No active entry evaluation"],
+                )
                 await self._process_commands()
                 _checkpoint(f"loop#{self.loop_count} commands processed")
 
@@ -643,6 +656,11 @@ class GoldScalperLive:
     # ── Per-bar handler ───────────────────────────────────────────────────────
 
     async def _on_new_bar(self, bar_time: datetime, tf: str = TIMEFRAME) -> None:
+        self._set_trade_permission(
+            False,
+            "EVALUATING",
+            [f"Evaluating live entry gates for {tf}"],
+        )
         # 1. Fetch candles for this timeframe (M5 / M10 / M15 / M20)
         candles = await fetch_candles(SYMBOL, tf, CANDLE_WINDOW)
         if len(candles) < 50:
@@ -718,6 +736,11 @@ class GoldScalperLive:
                 await ensure_connected()
                 acc_info = await get_account_info()
             if not acc_info or "balance" not in acc_info or "equity" not in acc_info:
+                self._set_trade_permission(
+                    False,
+                    "ACCOUNT_DATA_UNAVAILABLE",
+                    ["Live account balance/equity unavailable"],
+                )
                 log.error(
                     f"Account data unavailable after {self._consecutive_acc_failures} "
                     "attempt(s) — declaring DISCONNECTED"
@@ -760,6 +783,11 @@ class GoldScalperLive:
         self._last_guardian_status = gs
 
         if gs.halted:
+            self._set_trade_permission(
+                False,
+                "GUARDIAN_HALTED",
+                [gs.reason or "RiskGuardian halted trading"],
+            )
             log.warning(
                 f"🛡️  GUARDIAN HALT — no trade this bar.  "
                 f"Reason: {gs.reason}  "
@@ -788,6 +816,11 @@ class GoldScalperLive:
                 SYMBOL, self._known_open_tickets(), return_diagnostics=True
             )
         except RuntimeError as _pos_err:
+            self._set_trade_permission(
+                False,
+                "POSITION_CHECK_FAILED",
+                [f"Could not verify open positions: {_pos_err}"],
+            )
             log.error(
                 f"Cannot verify open positions — skipping trade entry this bar: {_pos_err}"
             )
@@ -806,6 +839,11 @@ class GoldScalperLive:
         # of something we can't yet identify; positions we DO recognise are
         # unaffected and continue to be managed normally.
         if _dropped_unknown and pos is None:
+            self._set_trade_permission(
+                False,
+                "UNKNOWN_POSITION_DATA",
+                ["Unidentified live position data was reported"],
+            )
             log.warning(
                 f"Skipping trade entry — mt5rest reported unidentified ticket(s) "
                 f"{_dropped_unknown} this poll that don't match any known "
@@ -897,6 +935,11 @@ class GoldScalperLive:
 
         # 7. Gate: max positions
         if len(raw_positions) >= MAX_OPEN_TRADES:
+            self._set_trade_permission(
+                False,
+                "MAX_OPEN_TRADES",
+                [f"Maximum open positions reached ({MAX_OPEN_TRADES})"],
+            )
             log.info(f"Max positions ({MAX_OPEN_TRADES}) open — skipping entry")
             self._write_state(
                 "HOLDING", acc_info, decision, pos,
@@ -915,6 +958,11 @@ class GoldScalperLive:
         # for-loop in _run_loop) and set to True by the first successful
         # placement, blocking all subsequent calls in the same tick.
         if self._trade_opened_this_tick:
+            self._set_trade_permission(
+                False,
+                "WITHIN_TICK_DUPLICATE_GUARD",
+                ["A trade was already opened during this tick"],
+            )
             log.info(
                 f"[{tf}] Skipping entry — a trade was already opened "
                 f"earlier this tick (multi-TF boundary guard)"
@@ -928,6 +976,11 @@ class GoldScalperLive:
         # 8. Gate: decision engine
         if not decision.allowed:
             reasons = " | ".join(decision.blocked_reasons or ["No signal"])
+            self._set_trade_permission(
+                False,
+                "SIGNAL_BLOCKED",
+                decision.blocked_reasons or ["No signal"],
+            )
             log.info(f"No trade → {reasons}")
             self._write_state(
                 "SCANNING", acc_info, decision, pos,
@@ -950,6 +1003,7 @@ class GoldScalperLive:
                 min_timeframes=OPTION_TWO_MIN_TIMEFRAMES,
             )
             if not _mtf_ok:
+                self._set_trade_permission(False, "MTF_BLOCKED", [_mtf_reason])
                 log.info(f"⛔  {_mtf_reason}")
                 _mtf_extra = {
                     **self._guardian_extra(gs),
@@ -984,6 +1038,14 @@ class GoldScalperLive:
             _tf_min = _TF_MIN_MAP.get(tf, 15)
             _elapsed_min = (bar_time - self._last_entry_bar_time).total_seconds() / 60.0
             if _elapsed_min < 2 * _tf_min:
+                self._set_trade_permission(
+                    False,
+                    "RANGE_COOLDOWN",
+                    [
+                        f"Same-direction range cooldown active "
+                        f"({2 * _tf_min:.0f} minutes)"
+                    ],
+                )
                 log.info(
                     f"⏸ Post-SL cooldown [{tf}]: {decision.direction} last entered "
                     f"{_elapsed_min:.0f}min ago in {decision.regime} regime — "
@@ -1017,6 +1079,11 @@ class GoldScalperLive:
         try:
             _confirm_positions = await get_open_positions(SYMBOL, self._known_open_tickets())
         except RuntimeError as _confirm_err:
+            self._set_trade_permission(
+                False,
+                "POSITION_CHECK_FAILED",
+                [f"Could not verify open positions: {_confirm_err}"],
+            )
             log.error(
                 f"Pre-order safety re-check could not verify positions — "
                 f"skipping entry this bar: {_confirm_err}"
@@ -1025,6 +1092,11 @@ class GoldScalperLive:
                                extra=self._guardian_extra(gs))
             return
         if _confirm_positions:
+            self._set_trade_permission(
+                False,
+                "POSITION_ALREADY_OPEN",
+                ["A position appeared during the pre-order safety re-check"],
+            )
             _confirm_pos = mt5_pos_to_dict(_confirm_positions[0])
             log.warning(
                 f"Pre-order safety re-check found position "
@@ -1037,6 +1109,11 @@ class GoldScalperLive:
             return
 
         # 9. ── PLACE ORDER ────────────────────────────────────────────────────
+        self._set_trade_permission(
+            True,
+            "READY_TO_PLACE_ORDER",
+            ["All live entry gates passed"],
+        )
         tp_params = decision.trade_params
         log.info(
             f"🔔 SIGNAL [{tf}] {decision.direction}  "
@@ -1058,6 +1135,11 @@ class GoldScalperLive:
         )
 
         if result.success:
+            self._set_trade_permission(
+                True,
+                "ORDER_PLACED",
+                ["Order accepted by the MT5 bridge"],
+            )
             # Block all further _on_new_bar calls in this tick from opening
             # another position (covers the multi-TF same-bar-boundary race).
             self._trade_opened_this_tick = True
@@ -1126,6 +1208,11 @@ class GoldScalperLive:
             except Exception as _sync_exc:
                 log.debug(f"Snapshot position sync skipped: {_sync_exc}")
         else:
+            self._set_trade_permission(
+                False,
+                "ORDER_FAILED",
+                [result.message or "Order was rejected"],
+            )
             log.error(f"❌ Trade failed: {result.message}")
 
         self._write_state(
@@ -1727,6 +1814,19 @@ class GoldScalperLive:
 
     # ── State writer ──────────────────────────────────────────────────────────
 
+    def _set_trade_permission(
+        self,
+        allowed: bool,
+        stage: str,
+        reasons: list[str],
+    ) -> None:
+        """Record final entry permission separately from signal state."""
+        self._last_trade_permission = {
+            "allowed": bool(allowed),
+            "stage": stage,
+            "reasons": [str(reason) for reason in reasons if str(reason).strip()],
+        }
+
     def _write_state(
         self,
         status: str,
@@ -1767,5 +1867,6 @@ class GoldScalperLive:
                 else None
             ),
             extra = merged_extra or None,
+            trade_permission = self._last_trade_permission,
         )
 
