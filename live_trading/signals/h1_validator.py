@@ -18,6 +18,7 @@ from live_trading.signals.gold_engine import OHLCV, calc_ema
 H1_MIN_CANDLES = 210  # EMA-200 plus a meaningful warm-up window.
 H1_MAX_GAP_HOURS = 96  # Allows normal weekend/holiday market closures.
 H1_MAX_LIVE_AGE_HOURS = 4
+H1_CLOSE_GRACE_SECONDS = 2
 EMA_MATCH_TOLERANCE = 0.0002
 EMA_COLLAPSE_TOLERANCE = 0.0001
 
@@ -132,11 +133,24 @@ def validate_h1_candles(
         age_hours = (current_time - latest_time).total_seconds() / 3600.0
         if age_hours < -0.05:
             issues.append("latest candle is in the future")
+        elif latest_time + timedelta(hours=1) > current_time + timedelta(
+            seconds=H1_CLOSE_GRACE_SECONDS
+        ):
+            issues.append("latest candle is still open")
         elif age_hours > H1_MAX_LIVE_AGE_HOURS and current_time.weekday() < 5:
             issues.append(
                 f"latest candle is {age_hours:.1f} hours old "
                 f"(maximum {H1_MAX_LIVE_AGE_HOURS})"
             )
+
+    for candle_time in valid_times:
+        if (
+            candle_time.minute != 0
+            or candle_time.second != 0
+            or candle_time.microsecond != 0
+        ):
+            issues.append("timestamps are not aligned to H1 boundaries")
+            break
 
     for index, candle in enumerate(candles):
         values = (candle.open, candle.high, candle.low, candle.close, candle.volume)

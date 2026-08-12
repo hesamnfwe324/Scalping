@@ -24,6 +24,7 @@ mt5rest endpoints used:
 """
 
 import asyncio
+import math
 import time as _time
 from datetime import datetime, timezone, timedelta
 from typing import Dict, List, Optional, Tuple
@@ -113,6 +114,73 @@ _TF_MAP = {
     "M1":  1,   "M5":  5,   "M10": 10,  "M15": 15,  "M20": 20,  "M30": 30,
     "H1":  60,  "H4":  240, "D1":  1440,
 }
+
+
+def _parse_candle_time(value: object) -> Optional[datetime]:
+    """Parse a mt5rest candle timestamp into an aware UTC datetime."""
+    raw = str(value).strip()
+    if not raw:
+        return None
+
+    try:
+        numeric = float(raw)
+        if math.isfinite(numeric):
+            if abs(numeric) > 100_000_000_000:
+                numeric /= 1000.0
+            return datetime.fromtimestamp(numeric, tz=timezone.utc)
+    except (TypeError, ValueError, OverflowError, OSError):
+        pass
+
+    try:
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _h1_request_minutes(count: int) -> int:
+    """Return a calendar lookback that can contain ``count`` traded H1 bars."""
+    # PriceHistoryV2 accepts a date range, not a bar count. A one-to-one
+    # count*1h range cannot contain 300 H1 bars when weekends or holidays fall
+    # inside it, so include a trading-week and holiday buffer.
+    active_bars = max(count + 10, math.ceil(count * 7 / 5))
+    return active_bars * 60 + (3 * 24 * 60)
+
+
+def _completed_candles(
+    candles: List[Tuple[datetime, OHLCV]],
+    *,
+    timeframe_minutes: int,
+    now: datetime,
+) -> List[OHLCV]:
+    """Keep chronologically ordered, completed candles.
+
+    The mt5rest ``time`` field is the candle open time. For H1, checking the
+    calculated close time avoids dropping a valid last candle just because the
+    bridge returned only closed history, while also preventing an in-progress
+    candle from entering the EMA calculation.
+    """
+    ordered: List[Tuple[datetime, OHLCV]] = []
+    seen_times: set[datetime] = set()
+    for candle_time, candle in sorted(candles, key=lambda item: item[0]):
+        if candle_time in seen_times:
+            continue
+        seen_times.add(candle_time)
+        ordered.append((candle_time, candle))
+
+    if timeframe_minutes == 60:
+        close_cutoff = now - timedelta(seconds=2)
+        return [
+            candle
+            for candle_time, candle in ordered
+            if candle_time + timedelta(hours=1) <= close_cutoff
+        ]
+
+    # Preserve the existing behavior for entry timeframes. This change is
+    # intentionally scoped to Option 1's H1 history path.
+    return [candle for _, candle in ordered[:-1]]
 
 
 def _get_session() -> aiohttp.ClientSession:
@@ -512,10 +580,16 @@ async def fetch_candles(
 
         tf_min = _TF_MAP.get(timeframe, 5)
 
-        # Request slightly more bars than needed to account for the current open bar
-        request_count = count + 5
-        now      = datetime.now(timezone.utc)
-        from_dt  = now - timedelta(minutes=tf_min * request_count)
+        # PriceHistoryV2 takes a calendar date range. H1 needs a longer
+        # lookback than count*1h so weekends/holidays do not reduce a
+        # requested 300-bar history below the EMA-200 warm-up requirement.
+        now = datetime.now(timezone.utc)
+        request_minutes = (
+            _h1_request_minutes(count)
+            if tf_min == 60
+            else tf_min * (count + 5)
+        )
+        from_dt = now - timedelta(minutes=request_minutes)
 
         from_str = from_dt.strftime("%Y-%m-%dT%H:%M:%SZ")
         to_str   = now.strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -547,40 +621,33 @@ async def fetch_candles(
                     log.error(f"fetch_candles unexpected response after reconnect: {str(data)[:300]}")
                     return []
 
-                candles: List[OHLCV] = []
+                candles_with_times: List[Tuple[datetime, OHLCV]] = []
                 for bar in data:
-                    # Normalise time to a plain string regardless of what
-                    # mt5rest serialises it as (ISO string, integer timestamp,
-                    # or datetime).  OHLCV.time is typed str; a non-string here
-                    # would crash candle.time.replace() in
-                    # get_last_completed_bar_time() and also break the sort
-                    # key when types are mixed across bars.
-                    t = str(bar.get("time", ""))
-                    candles.append(OHLCV(
-                        time=t,
-                        open=float(bar.get("openPrice",  0.0)),
-                        high=float(bar.get("highPrice",  0.0)),
-                        low=float(bar.get("lowPrice",    0.0)),
-                        close=float(bar.get("closePrice", 0.0)),
-                        volume=float(bar.get("tickVolume", bar.get("volume", 0))),
-                    ))
-
-                # Sort and deduplicate by timestamp before removing the open bar.
-                # The bridge can return overlapping pages with duplicate candles;
-                # feeding those into indicators shifts the entire signal window.
-                candles.sort(key=lambda candle: candle.time)
-                deduplicated: List[OHLCV] = []
-                seen_times: set[str] = set()
-                for candle in candles:
-                    if candle.time in seen_times:
+                    candle_time = _parse_candle_time(bar.get("time", ""))
+                    if candle_time is None:
+                        log.warning("fetch_candles skipped bar with invalid timestamp")
                         continue
-                    seen_times.add(candle.time)
-                    deduplicated.append(candle)
-                candles = deduplicated
+                    try:
+                        candle = OHLCV(
+                            # Canonical UTC timestamps make ordering and the
+                            # H1 closed-bar check independent of API encoding.
+                            time=candle_time.isoformat().replace("+00:00", "Z"),
+                            open=float(bar.get("openPrice", 0.0)),
+                            high=float(bar.get("highPrice", 0.0)),
+                            low=float(bar.get("lowPrice", 0.0)),
+                            close=float(bar.get("closePrice", 0.0)),
+                            volume=float(bar.get("tickVolume", bar.get("volume", 0))),
+                        )
+                    except (TypeError, ValueError):
+                        log.warning("fetch_candles skipped bar with invalid OHLCV values")
+                        continue
+                    candles_with_times.append((candle_time, candle))
 
-                # Drop the last bar (may be the still-open current bar)
-                if candles:
-                    candles = candles[:-1]
+                candles = _completed_candles(
+                    candles_with_times,
+                    timeframe_minutes=tf_min,
+                    now=now,
+                )
 
                 # Return only the last `count` completed bars
                 return candles[-count:] if len(candles) > count else candles
