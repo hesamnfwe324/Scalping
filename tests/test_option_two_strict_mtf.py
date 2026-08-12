@@ -53,6 +53,33 @@ def test_option_two_blocks_range_htf_even_when_directional():
     assert "range" in reason.lower()
 
 
+def test_option_three_blocks_directional_bias_with_neutral_h1_trend():
+    bias = _bias(direction="BUY", regime="LOW_VOLATILITY")
+    bias.trend = "NEUTRAL"
+
+    allowed, reason = mtf_allows_trade(
+        bias,
+        "BUY",
+        confidence=90.0,
+        confirmed_timeframes=2,
+    )
+
+    assert not allowed
+    assert "neutral" in reason.lower()
+
+
+def test_option_three_blocks_neutral_h1_regime_even_when_directional():
+    allowed, reason = mtf_allows_trade(
+        _bias(direction="SELL", regime="NEUTRAL"),
+        "SELL",
+        confidence=90.0,
+        confirmed_timeframes=2,
+    )
+
+    assert not allowed
+    assert "neutral" in reason.lower()
+
+
 def test_option_two_blocks_missing_htf_data():
     allowed, reason = mtf_allows_trade(
         None, "BUY", confidence=90.0, confirmed_timeframes=0
