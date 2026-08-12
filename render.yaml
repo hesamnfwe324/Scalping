@@ -92,10 +92,11 @@ services:
         value: "0.25"
       - key: RANGE_RISK_PERCENT
         value: "0.25"
-      # Option 2: keep RANGE context and telemetry, but do not block entries
-      # on Wyckoff/PA/edge/sweep/reversal completeness.
+      # RANGE protection: BUY entries must be at support and SELL entries must
+      # be at resistance, with a fresh same-direction sweep, a closed-candle
+      # reversal, and the dedicated confirmation floor.
       - key: RANGE_ENTRY_FILTERS_ENABLED
-        value: "false"
+        value: "true"
       - key: MAX_RANGE_TRADES_PER_SESSION
         value: "2"
       - key: MAX_OPEN_TRADES
