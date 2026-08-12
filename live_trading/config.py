@@ -152,10 +152,13 @@ CANDLE_WINDOW = _int("CANDLE_WINDOW", 300, lo=50, hi=5000)
 # MIN_CONFIRMATIONS: minimum engines that must agree (out of 4: SMC, Trend, PA, Wyckoff).
 # CONF_HARD_MIN: trades below this confidence % are always rejected.
 RISK_PERCENT      = _float("RISK_PERCENT",      1.0,  lo=0.01, hi=10.0)
-# MIN_CONFIRMATIONS=2: SMC (always) + any 1 of (Trend / PA / Wyckoff).
-# Wyckoff fires rarely on 5m; PA patterns don't appear every candle.
-# Requiring 3 caused multi-day silences. 2 keeps quality while allowing flow.
+# MIN_CONFIRMATIONS=2: SMC (always) + any 1 of (Trend / PA / Wyckoff)
+# for ordinary regimes. RANGE has its own stricter floor below so choppy
+# conditions cannot enter on only two agreeing engines.
 MIN_CONFIRMATIONS = _int("MIN_CONFIRMATIONS",   2,    lo=1,    hi=10)
+# Option 4: RANGE entries require at least 3 of the 4 independent engines.
+# Keep this separate from the global floor so non-RANGE behavior is unchanged.
+RANGE_MIN_CONFIRMATIONS = _int("RANGE_MIN_CONFIRMATIONS", 3, lo=1, hi=4)
 # When enabled, every new trade must also have a same-direction Price Action signal.
 # Default false preserves existing behavior until explicitly enabled on Render.
 REQUIRE_PRICE_ACTION = os.getenv("REQUIRE_PRICE_ACTION", "false").strip().lower() in {

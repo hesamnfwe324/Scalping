@@ -83,6 +83,9 @@ services:
       # deploy from the old file would NOT have reproduced current behavior.
       - key: MIN_CONFIRMATIONS
         value: "2"
+      # Option 4: RANGE entries need at least 3 of 4 engine confirmations.
+      - key: RANGE_MIN_CONFIRMATIONS
+        value: "3"
       - key: REQUIRE_PRICE_ACTION
         value: "true"
       - key: REQUIRE_SMC_PRICE_ACTION_WYCKOFF

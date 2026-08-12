@@ -22,6 +22,7 @@ from live_trading.signals.divergence_engine import analyze_divergence, Divergenc
 from live_trading.risk.capital_manager import CapitalInput, CapitalOutput, calc_trade_parameters
 from live_trading.config import (
     CONF_HARD_MIN,
+    RANGE_MIN_CONFIRMATIONS,
     REQUIRE_SMC_PRICE_ACTION_WYCKOFF,
 )
 
@@ -29,6 +30,31 @@ from live_trading.config import (
 # and the regime minimum must still achieve this R:R to be allowed.
 # 1.3 = profitable in expectancy even at 45% win rate (1.3 × 0.45 > 0.55).
 CONF_MARGINAL_RR = 1.3
+
+# Regimes where PA/Wyckoff naturally fire less often. Their existing adaptive
+# one-step tightening is preserved; RANGE gets the explicit option-4 floor.
+_CHOPPY_REGIMES = {"ACCUMULATION", "DISTRIBUTION", "HIGH_VOLATILITY"}
+
+
+def _effective_min_confirmations(
+    base_min_confirmations: int,
+    regime: str,
+    counter_trend: bool,
+    range_min_confirmations: int = RANGE_MIN_CONFIRMATIONS,
+) -> int:
+    """Return the final N-of-4 gate without weakening the RANGE floor."""
+    if regime == "RANGE":
+        # Option 4 is a floor, not a replacement: a stricter operator setting
+        # remains stricter. Counter-trend remains an additional requirement.
+        range_floor = max(base_min_confirmations, range_min_confirmations)
+        if counter_trend:
+            return max(range_floor, min(base_min_confirmations + 1, 4))
+        return range_floor
+    if counter_trend:
+        return min(base_min_confirmations + 1, 4)
+    if regime in _CHOPPY_REGIMES:
+        return min(base_min_confirmations + 1, 4)
+    return base_min_confirmations
 
 
 @dataclass
@@ -119,23 +145,12 @@ def run_decision_engine(
                      (candidate == "SELL" and trend_dir == "BUY")
 
     # Detect regime early — needed to set the adaptive confirmation threshold.
-    # RANGE / ACCUMULATION / DISTRIBUTION / HIGH_VOLATILITY markets suppress
-    # PA and Wyckoff signals by design, so we lower the bar to 2 in those
-    # regimes. Trending regimes keep the stricter operator-configured value.
     regime = detect_market_regime(candles, trend, wyckoff, use_atr_high_vol)
-
-    _RANGE_REGIMES = {"RANGE", "ACCUMULATION", "DISTRIBUTION", "HIGH_VOLATILITY"}
-    if _counter_trend:
-        # Counter-trend: one extra confirmation required — EMA opposes direction.
-        effective_min_confirmations = min(min_confirmations + 1, 4)
-    elif regime.regime in _RANGE_REGIMES:
-        # Range/volatile regimes: require one extra confirmation over the base
-        # minimum.  Structural signals alone (e.g. SMC + Wyckoff without EMA
-        # trend or PA) are insufficient in choppy/ranging markets — at least
-        # one momentum engine must also agree to avoid repeated SL hits.
-        effective_min_confirmations = min(min_confirmations + 1, 4)
-    else:
-        effective_min_confirmations = min_confirmations
+    effective_min_confirmations = _effective_min_confirmations(
+        min_confirmations,
+        regime.regime,
+        _counter_trend,
+    )
 
     # Entry filter — minimum N-of-4 vote gate (SMC always required)
     ef = apply_entry_filter(
