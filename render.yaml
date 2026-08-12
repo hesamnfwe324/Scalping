@@ -66,9 +66,9 @@ services:
         value: "5m"
       - key: CANDLE_WINDOW
         value: "300"
-      # Option 2: keep the strict HTF confidence floor reproducible from the live Render environment.
+      # Option 2: keep the 47% HTF confidence floor reproducible from the live Render environment.
       - key: OPTION_TWO_MIN_CONFIDENCE
-        value: "49"
+        value: "47"
       # Option 4: old BOS/CHoCH events cannot authorize live entries.
       - key: STRUCTURE_MAX_AGE_BARS
         value: "24"
@@ -107,8 +107,13 @@ services:
         value: "true"
       - key: REQUIRE_SMC_PRICE_ACTION_WYCKOFF
         value: "true"
+      # Operator-selected confidence policy: 47% for normal and RANGE entries.
+      - key: NORMAL_MIN_CONFIDENCE
+        value: "47"
+      - key: RANGE_MIN_CONFIDENCE
+        value: "47"
       - key: CONF_HARD_MIN
-        value: "32"
+        value: "47"
       - key: DAILY_LOSS_LIMIT_PCT
         value: "4.0"
       - key: MAX_DRAWDOWN_PCT
