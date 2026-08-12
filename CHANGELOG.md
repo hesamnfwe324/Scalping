@@ -9,6 +9,22 @@ metric that affects trading behaviour. Strategy is frozen at v4 Stable.
 
 ---
 
+## [4.0.5] — 2026-08-12 — RANGE Playbook Alignment
+
+### Fixed — Dedicated RANGE Entries
+
+- RANGE now uses the operator-defined two-confirmation rule: SMC plus either
+  Price Action or Wyckoff. The global three-engine option remains strict for
+  non-RANGE regimes.
+- Render's explicit RANGE settings now match the runbook: enabled, two
+  confirmations, 1.5 minimum R:R, 0.25 ATR edge distance, 0.25% risk, one
+  open position, and at most two RANGE entries per UTC session.
+- H1 RANGE remains a contextual gate for the dedicated RANGE playbook; it
+  never authorizes unrestricted mid-range trend entries.
+- State telemetry version updated to `v4.0.5`.
+
+---
+
 ## [4.0.4] — 2026-08-10 — Stable Release / Portability Pass
 
 Two parts: (1) engineering fixes deployed and verified live during incident response

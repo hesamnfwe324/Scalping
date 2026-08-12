@@ -83,9 +83,26 @@ services:
       # deploy from the old file would NOT have reproduced current behavior.
       - key: MIN_CONFIRMATIONS
         value: "2"
-      # Option 4: RANGE entries need at least 3 of 4 engine confirmations.
+      # Dedicated RANGE playbook from the operator runbook:
+      # edge + fresh same-direction sweep + closed-candle reversal +
+      # SMC plus either Price Action or Wyckoff.
+      - key: RANGE_TRADING_ENABLED
+        value: "true"
       - key: RANGE_MIN_CONFIRMATIONS
-        value: "3"
+        value: "2"
+      - key: RANGE_MIN_RR
+        value: "1.5"
+      - key: RANGE_EDGE_ATR_DISTANCE
+        value: "0.25"
+      - key: RANGE_RISK_PERCENT
+        value: "0.25"
+      - key: MAX_RANGE_TRADES_PER_SESSION
+        value: "2"
+      - key: MAX_OPEN_TRADES
+        value: "1"
+      # These global confirmation switches remain strict for trend regimes.
+      # The decision engine applies the dedicated two-confirmation RANGE rule
+      # instead, so RANGE does not require all three SMC/PA/Wyckoff engines.
       - key: REQUIRE_PRICE_ACTION
         value: "true"
       - key: REQUIRE_SMC_PRICE_ACTION_WYCKOFF
@@ -104,6 +121,17 @@ services:
         value: "M20,M15,M10,5m"
       - key: QUALITY_ADX_MIN
         value: "12"
+      # H1 remains a mandatory context filter. H1 RANGE is only accepted for
+      # the dedicated lower-timeframe RANGE playbook; it never authorizes
+      # unrestricted mid-range trend entries.
+      - key: MTF_ENABLED
+        value: "true"
+      - key: MTF_TIMEFRAME
+        value: "H1"
+      - key: MTF_CANDLE_WINDOW
+        value: "300"
+      - key: OPTION_TWO_MIN_TIMEFRAMES
+        value: "2"
       - key: PYTHON_VERSION
         value: "3.11.0"
       - key: STATE_FILE

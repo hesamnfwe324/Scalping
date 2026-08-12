@@ -111,6 +111,13 @@ Full reference with descriptions: [`live_trading/.env.example`](live_trading/.en
 | `CANDLE_WINDOW` | No | `300` | Bars fetched per candle request |
 | `RISK_PERCENT` | No | `1.0` | Risk per trade (% of balance) |
 | `MIN_CONFIRMATIONS` | No | `2` | Min signal confirmations (SMC always required + N of Trend/PA/Wyckoff) |
+| `RANGE_TRADING_ENABLED` | No | `true` | Enable the dedicated edge/sweep/reversal RANGE playbook |
+| `RANGE_MIN_CONFIRMATIONS` | No | `2` | RANGE requires SMC plus Price Action or Wyckoff |
+| `RANGE_MIN_RR` | No | `1.5` | Minimum RANGE risk/reward |
+| `RANGE_EDGE_ATR_DISTANCE` | No | `0.25` | Maximum distance from a RANGE edge in ATR units |
+| `RANGE_RISK_PERCENT` | No | `0.25` | Risk per RANGE trade (% of balance) |
+| `MAX_RANGE_TRADES_PER_SESSION` | No | `2` | Successful RANGE entries allowed per UTC session |
+| `MAX_OPEN_TRADES` | No | `1` | Maximum simultaneous open positions |
 | `CONF_HARD_MIN` | No | `32` | Confidence-engine hard floor |
 | `OPTION_TWO_MIN_CONFIDENCE` | No | `49` | MTF confidence floor for the HTF-confirmed entry gate |
 | `QUALITY_ADX_MIN` | No | `12` | Quality filter ADX floor |

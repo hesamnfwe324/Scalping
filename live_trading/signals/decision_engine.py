@@ -60,6 +60,34 @@ def _effective_min_confirmations(
     return base_min_confirmations
 
 
+def _range_confirmation_gate(
+    entry_filter: EntryFilterResult,
+    min_confirmations: int,
+) -> tuple[bool, str]:
+    """Apply the RANGE-specific two-vote confirmation rule.
+
+    RANGE entries always have an SMC direction because the candidate direction
+    comes from SMC.  The second confirmation must be either Price Action or
+    Wyckoff; a matching EMA trend alone is not sufficient in a choppy market.
+    This intentionally overrides the global three-engine option-1 gate for
+    RANGE only.  The separate edge, fresh sweep, reversal, R:R, and session
+    limits remain mandatory.
+    """
+    if entry_filter.confirmation_count < min_confirmations:
+        return (
+            False,
+            f"RANGE entry blocked: {entry_filter.confirmation_count}/"
+            f"{min_confirmations} confirmations",
+        )
+    if not (entry_filter.price_action or entry_filter.wyckoff):
+        return (
+            False,
+            "RANGE entry blocked: second confirmation must be "
+            "Price Action or Wyckoff",
+        )
+    return True, ""
+
+
 @dataclass
 class DecisionResult:
     allowed:         bool
@@ -165,17 +193,33 @@ def run_decision_engine(
         _counter_trend,
     )
 
-    # Entry filter — minimum N-of-4 vote gate (SMC always required)
+    # Entry filter — minimum N-of-4 vote gate (SMC always required).
+    # RANGE has a narrower rule than ordinary regimes: SMC plus either
+    # Price Action or Wyckoff is sufficient; the global option-1 gate must
+    # not turn that dedicated two-confirmation playbook into a three-vote gate.
+    is_range_regime = regime.regime == "RANGE"
     ef = apply_entry_filter(
         smc_signal      = candidate,
         ema_trend       = trend.trend,
         pa_signal       = pa.pa_signal,
         wyckoff_signal  = wyckoff.wyckoff_signal,
         min_confirmations = effective_min_confirmations,
-        require_price_action = require_price_action,
-        require_smc_price_action_wyckoff = require_smc_price_action_wyckoff,
+        require_price_action = require_price_action and not is_range_regime,
+        require_smc_price_action_wyckoff = (
+            require_smc_price_action_wyckoff and not is_range_regime
+        ),
     )
-    if not ef.allowed:
+    if is_range_regime:
+        range_votes_ok, range_votes_reason = _range_confirmation_gate(
+            ef, range_min_confirmations
+        )
+        if not range_votes_ok:
+            return _make_neutral(
+                smc, wyckoff, pa, trend,
+                [range_votes_reason],
+                [range_votes_reason],
+            )
+    elif not ef.allowed:
         votes = (f"SMC={'✓' if ef.smc else '✗'}  "
                  f"Trend={'✓' if ef.trend else '✗'}  "
                  f"PA={'✓' if ef.price_action else '✗'}  "
@@ -199,7 +243,7 @@ def run_decision_engine(
     # RANGE is a separate playbook. It must never inherit a trend entry just
     # because the generic four-engine vote happened to pass.
     range_context: Optional[RangeContext] = None
-    if regime.regime == "RANGE":
+    if is_range_regime:
         if not range_trading_enabled:
             return _make_neutral(
                 smc, wyckoff, pa, trend,
