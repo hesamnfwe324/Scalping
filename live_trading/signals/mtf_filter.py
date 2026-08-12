@@ -49,6 +49,12 @@ from live_trading.signals.wyckoff_engine import analyze_wyckoff, WyckoffResult
 from live_trading.signals.market_regime import detect_market_regime, RegimeResult
 
 
+# H1 states that must never authorize a lower-timeframe entry.  Keep this
+# explicit and centralized so a malformed or stale directional bias cannot
+# bypass the final fail-closed gate.
+HTF_BLOCKED_REGIMES = frozenset({"NEUTRAL", "RANGE"})
+
+
 # ── Result dataclass ──────────────────────────────────────────────────────────
 
 @dataclass
@@ -264,8 +270,18 @@ def mtf_allows_trade(
             f"regime={bias.regime}]",
         )
 
-    if bias.regime == "RANGE":
-        return False, "MTF BLOCK: HTF regime is RANGE — entry prohibited"
+    # Fail closed on the H1 trend/regime itself as well as on the public
+    # direction.  compute_mtf_bias() normally keeps these fields consistent,
+    # but this guard prevents a stale, partially populated, or future bias
+    # object from authorizing a trade while H1 is neutral or ranging.
+    if bias.trend == "NEUTRAL":
+        return (
+            False,
+            f"MTF BLOCK: HTF trend is NEUTRAL [regime={bias.regime}]",
+        )
+
+    if bias.regime in HTF_BLOCKED_REGIMES:
+        return False, f"MTF BLOCK: HTF regime is {bias.regime} — entry prohibited"
 
     if m5_direction != bias.direction:
         return (
