@@ -74,15 +74,11 @@ services:
         value: "24"
       - key: RISK_PERCENT
         value: "1.0"
-      # STABLE v4.0.4 values -- these are the actual settings the bot has been
-      # running with in production (verified against the live Render service
-      # on 2026-08-10). Earlier revisions of this file had leftover
-      # "testing mode" values (MIN_CONFIRMATIONS=1, CONF_HARD_MIN=0,
-      # DAILY_LOSS_LIMIT_PCT=50.0, MAX_DRAWDOWN_PCT=50.0) that no longer
-      # matched the dashboard-configured production values below -- a fresh
-      # deploy from the old file would NOT have reproduced current behavior.
+      # Production signal policy: accept a single valid engine confirmation
+      # after the independent confidence, quality, regime, sizing, and risk
+      # gates have passed. The risk gates remain active and are not bypassed.
       - key: MIN_CONFIRMATIONS
-        value: "2"
+        value: "1"
       # Dedicated RANGE playbook from the operator runbook:
       # edge + fresh same-direction sweep + closed-candle reversal +
       # SMC plus either Price Action or Wyckoff.
