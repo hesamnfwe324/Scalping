@@ -74,11 +74,11 @@ services:
         value: "24"
       - key: RISK_PERCENT
         value: "1.0"
-      # Production signal policy: accept a single valid engine confirmation
+      # Production signal policy: require SMC plus one independent confirmation
       # after the independent confidence, quality, regime, sizing, and risk
       # gates have passed. The risk gates remain active and are not bypassed.
       - key: MIN_CONFIRMATIONS
-        value: "1"
+        value: "2"
       # Dedicated RANGE playbook from the operator runbook:
       # edge + fresh same-direction sweep + closed-candle reversal +
       # SMC plus either Price Action or Wyckoff.
@@ -101,13 +101,13 @@ services:
         value: "2"
       - key: MAX_OPEN_TRADES
         value: "1"
-      # These global confirmation switches remain strict for trend regimes.
-      # The decision engine applies the dedicated two-confirmation RANGE rule
-      # instead, so RANGE does not require all three SMC/PA/Wyckoff engines.
+      # Normal entries still require two confirmations through MIN_CONFIRMATIONS,
+      # but do not force Price Action to be the second vote. This preserves
+      # SMC + Trend/Wyckoff opportunities without weakening the vote floor.
       - key: REQUIRE_PRICE_ACTION
-        value: "true"
+        value: "false"
       - key: REQUIRE_SMC_PRICE_ACTION_WYCKOFF
-        value: "true"
+        value: "false"
       # Operator-selected confidence policy: 47% for normal and RANGE entries.
       - key: NORMAL_MIN_CONFIDENCE
         value: "47"
@@ -127,10 +127,10 @@ services:
         value: "M20,M15,M10,5m"
       - key: QUALITY_ADX_MIN
         value: "12"
-      # Option 1: disable the H1/MTF entry blocker. The local signal,
-      # confidence, sizing, stop, position, and Guardian gates remain active.
+      # Keep the H1/MTF context gate active. The local signal, confidence,
+      # sizing, stop, position, and Guardian gates remain active as well.
       - key: MTF_ENABLED
-        value: "false"
+        value: "true"
       - key: MTF_TIMEFRAME
         value: "H1"
       - key: MTF_CANDLE_WINDOW
