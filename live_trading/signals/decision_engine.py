@@ -18,8 +18,11 @@ from live_trading.signals.market_regime import RegimeResult, RegimeEntryRules, d
 from live_trading.signals.confidence_engine import ConfidenceResult, ConfidenceComponents, calc_confidence
 from live_trading.signals.quality_filter import QualityFilterResult, apply_quality_filter, get_session_quality
 from live_trading.signals.entry_filter import apply_entry_filter, EntryFilterResult
+from live_trading.signals.range_strategy import RangeContext, evaluate_range_entry
 from live_trading.signals.divergence_engine import analyze_divergence, DivergenceResult
-from live_trading.risk.capital_manager import CapitalInput, CapitalOutput, calc_trade_parameters
+from live_trading.risk.capital_manager import (
+    FIXED_TP_RR, CapitalInput, CapitalOutput, calc_trade_parameters,
+)
 from live_trading.config import (
     CONF_HARD_MIN,
     RANGE_MIN_CONFIRMATIONS,
@@ -83,6 +86,7 @@ class DecisionResult:
     entry_filter:    Optional[EntryFilterResult] = None
     divergence:      Optional[DivergenceResult]  = None
     dxy_signal:      str                         = "NEUTRAL"
+    range_context:   Optional[RangeContext]      = None
 
 
 def _candidate_direction(smc: SmcResult) -> str:
@@ -96,7 +100,10 @@ def _candidate_direction(smc: SmcResult) -> str:
     return "NEUTRAL"
 
 
-def _make_neutral(smc, wyckoff, pa, trend, blocked_reasons, reasoning=None) -> DecisionResult:
+def _make_neutral(
+    smc, wyckoff, pa, trend, blocked_reasons, reasoning=None,
+    range_context: Optional[RangeContext] = None,
+) -> DecisionResult:
     from live_trading.signals.market_regime import REGIME_RULES
     rules = REGIME_RULES["RANGE"]
     return DecisionResult(
@@ -115,6 +122,7 @@ def _make_neutral(smc, wyckoff, pa, trend, blocked_reasons, reasoning=None) -> D
         reasoning=reasoning or [],
         trade_params=None,
         smc=smc, wyckoff=wyckoff, pa=pa, trend=trend,
+        range_context=range_context,
     )
 
 
@@ -127,6 +135,11 @@ def run_decision_engine(
     dxy_signal:        str   = "NEUTRAL",
     require_price_action: bool = False,
     require_smc_price_action_wyckoff: bool = REQUIRE_SMC_PRICE_ACTION_WYCKOFF,
+    range_trading_enabled: bool = True,
+    range_min_confirmations: int = 2,
+    range_min_rr: float = 1.5,
+    range_edge_atr_distance: float = 0.25,
+    range_risk_percent: Optional[float] = None,
 ) -> DecisionResult:
 
     smc     = analyze_smc_structure(candles)
@@ -182,6 +195,33 @@ def run_decision_engine(
             reason = (f"Entry filter: only {ef.confirmation_count}/{effective_min_confirmations} "
                       f"confirmations — {votes}  [regime={regime.regime}]")
         return _make_neutral(smc, wyckoff, pa, trend, [reason], [reason])
+
+    # RANGE is a separate playbook. It must never inherit a trend entry just
+    # because the generic four-engine vote happened to pass.
+    range_context: Optional[RangeContext] = None
+    if regime.regime == "RANGE":
+        if not range_trading_enabled:
+            return _make_neutral(
+                smc, wyckoff, pa, trend,
+                ["RANGE trading is disabled"],
+                ["RANGE trading is disabled"],
+            )
+        range_context = evaluate_range_entry(
+            candles=candles,
+            direction=candidate,
+            smc=smc,
+            pa=pa,
+            confirmation_count=ef.confirmation_count,
+            min_confirmations=range_min_confirmations,
+            edge_atr_distance=range_edge_atr_distance,
+        )
+        if not range_context.valid:
+            return _make_neutral(
+                smc, wyckoff, pa, trend,
+                [range_context.reason],
+                [range_context.reason],
+                range_context=range_context,
+            )
 
     if candidate == "BUY"  and not regime.rules.allow_long:
         return _make_neutral(smc, wyckoff, pa, trend,
@@ -284,19 +324,37 @@ def run_decision_engine(
                      if smc.equal_lows  and smc.equal_lows[-1].price  < entry else None)
     eq_resistance = (smc.equal_highs[-1].price
                      if smc.equal_highs and smc.equal_highs[-1].price > entry else None)
+    range_support = (
+        range_context.support
+        if range_context is not None and range_context.support < entry
+        else None
+    )
+    range_resistance = (
+        range_context.resistance
+        if range_context is not None and range_context.resistance > entry
+        else None
+    )
 
     cap_input = CapitalInput(
         direction=candidate,
         entry_price=entry,
         atr=regime.atr,
         account_balance=account_balance,
-        risk_percent=risk_percent,
+        risk_percent=(
+            range_risk_percent
+            if regime.regime == "RANGE" and range_risk_percent is not None
+            else risk_percent
+        ),
+        take_profit_rr=range_min_rr if regime.regime == "RANGE" else FIXED_TP_RR,
         order_block_top=latest_ob.high if latest_ob else None,
         order_block_bottom=latest_ob.low if latest_ob else None,
         swing_high=buy_bos_above[-1]  if buy_bos_above  else None,
         swing_low=sell_bos_below[-1]  if sell_bos_below else None,
-        support_level=eq_support,
-        resistance_level=eq_resistance,
+        support_level=range_support or eq_support,
+        resistance_level=range_resistance or eq_resistance,
+        take_profit_level=(
+            range_resistance if candidate == "BUY" else range_support
+        ),
     )
     trade_params = calc_trade_parameters(cap_input)
 
@@ -319,14 +377,15 @@ def run_decision_engine(
             )
 
     # R:R gate
-    if trade_params.risk_reward_ratio < regime.rules.min_rr:
+    required_rr = range_min_rr if regime.regime == "RANGE" else regime.rules.min_rr
+    if trade_params.risk_reward_ratio < required_rr:
         return DecisionResult(
             allowed=False, direction=candidate,  # type: ignore
             confidence=conf_result.confidence, components=conf_result.components,
             grade=conf_result.grade, regime=regime.regime, regime_label=regime.rules.label,
             regime_rules=regime.rules, quality_filter=quality,
             blocked_reasons=[
-                f"R:R {trade_params.risk_reward_ratio:.2f} < {regime.rules.min_rr} "
+                f"R:R {trade_params.risk_reward_ratio:.2f} < {required_rr} "
                 f"minimum for {regime.rules.label}"
             ],
             reasoning=conf_result.reasoning, trade_params=None,
@@ -346,6 +405,7 @@ def run_decision_engine(
         entry_filter=ef,
         divergence=divergence,
         dxy_signal=dxy_signal,
+        range_context=range_context,
     )
 
 

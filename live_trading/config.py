@@ -156,9 +156,17 @@ RISK_PERCENT      = _float("RISK_PERCENT",      1.0,  lo=0.01, hi=10.0)
 # for ordinary regimes. RANGE has its own stricter floor below so choppy
 # conditions cannot enter on only two agreeing engines.
 MIN_CONFIRMATIONS = _int("MIN_CONFIRMATIONS",   2,    lo=1,    hi=10)
-# Option 4: RANGE entries require at least 3 of the 4 independent engines.
-# Keep this separate from the global floor so non-RANGE behavior is unchanged.
-RANGE_MIN_CONFIRMATIONS = _int("RANGE_MIN_CONFIRMATIONS", 3, lo=1, hi=4)
+# Dedicated RANGE playbook: the edge/sweep/reversal gate is mandatory and the
+# four-engine vote must still meet this minimum. Keep it separate from the
+# global floor so non-RANGE behavior remains unchanged.
+RANGE_TRADING_ENABLED = os.getenv("RANGE_TRADING_ENABLED", "true").strip().lower() in {
+    "1", "true", "yes", "on",
+}
+RANGE_MIN_CONFIRMATIONS = _int("RANGE_MIN_CONFIRMATIONS", 2, lo=2, hi=4)
+RANGE_MIN_RR = _float("RANGE_MIN_RR", 1.5, lo=1.0, hi=10.0)
+RANGE_EDGE_ATR_DISTANCE = _float("RANGE_EDGE_ATR_DISTANCE", 0.25, lo=0.05, hi=2.0)
+RANGE_RISK_PERCENT = _float("RANGE_RISK_PERCENT", 0.5, lo=0.01, hi=10.0)
+MAX_RANGE_TRADES_PER_SESSION = _int("MAX_RANGE_TRADES_PER_SESSION", 2, lo=1, hi=20)
 # When enabled, every new trade must also have a same-direction Price Action signal.
 # Default false preserves existing behavior until explicitly enabled on Render.
 REQUIRE_PRICE_ACTION = os.getenv("REQUIRE_PRICE_ACTION", "false").strip().lower() in {
@@ -183,7 +191,7 @@ QUALITY_ADX_MIN   = _float("QUALITY_ADX_MIN",    15.0, lo=5.0,  hi=40.0)
 # 300 bars on M5 is roughly 25 hours and is too permissive for scalping;
 # the default 24 closed bars keeps BOS/CHoCH actionable for about two hours.
 STRUCTURE_MAX_AGE_BARS = _int("STRUCTURE_MAX_AGE_BARS", 24, lo=3, hi=100)
-MAX_OPEN_TRADES   = 1
+MAX_OPEN_TRADES   = _int("MAX_OPEN_TRADES", 1, lo=1, hi=10)
 
 USE_ATR_HIGH_VOL_FILTER = os.getenv("USE_ATR_HIGH_VOL_FILTER", "false").lower() == "true"
 # ── Multi-Timeframe (HTF) Filter ─────────────────────────────────────────────

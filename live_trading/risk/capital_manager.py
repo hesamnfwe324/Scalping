@@ -22,6 +22,8 @@ class CapitalInput:
     atr:                 float
     account_balance:     float
     risk_percent:        float = DEFAULT_RISK_PCT
+    take_profit_rr:      float = FIXED_TP_RR
+    take_profit_level:   Optional[float] = None
     order_block_top:     Optional[float] = None
     order_block_bottom:  Optional[float] = None
     swing_high:          Optional[float] = None
@@ -109,8 +111,19 @@ def calc_trade_parameters(inp: CapitalInput) -> CapitalOutput:
     sl_dist    = _r2(abs(entry - sl))
     sl_pips    = _r2(sl_dist * 100)
 
-    tp_dist    = sl_dist * FIXED_TP_RR
-    tp         = _r2(entry + tp_dist if direction == "BUY" else entry - tp_dist)
+    range_target_valid = (
+        inp.take_profit_level is not None
+        and (
+            (direction == "BUY" and inp.take_profit_level > entry)
+            or (direction == "SELL" and inp.take_profit_level < entry)
+        )
+    )
+    if range_target_valid:
+        tp = _r2(inp.take_profit_level)  # type: ignore[arg-type]
+        tp_dist = abs(tp - entry)
+    else:
+        tp_dist = sl_dist * inp.take_profit_rr
+        tp = _r2(entry + tp_dist if direction == "BUY" else entry - tp_dist)
     rr         = _r2(tp_dist / sl_dist) if sl_dist > 0 else 0.0
 
     lot, risk  = _calc_lot_size(sl_dist, inp.account_balance, risk_pct)

@@ -226,6 +226,7 @@ def mtf_allows_trade(
     confirmed_timeframes: int = 0,
     min_confidence: float = 49.0,
     min_timeframes: int = 2,
+    allow_range_regime: bool = False,
 ) -> tuple[bool, str]:
     """
     Check whether a proposed M5 trade is aligned with the HTF bias.
@@ -262,6 +263,27 @@ def mtf_allows_trade(
 
     if m5_direction == "NEUTRAL":
         return False, "MTF BLOCK: entry direction is NEUTRAL"
+
+    # A RANGE entry has its own edge/sweep/reversal gate on the active
+    # timeframe.  When H1 is also ranging, it is valid context rather than a
+    # reason to block every trade.  Directional H1 regimes still go through
+    # the normal alignment check below.
+    if allow_range_regime and bias.regime == "RANGE":
+        if confidence is None:
+            return False, "MTF BLOCK: confidence is unavailable"
+        if confidence < min_confidence:
+            return (
+                False,
+                f"MTF BLOCK: range confidence {confidence:.1f}% < "
+                f"{min_confidence:.1f}% minimum",
+            )
+        if confirmed_timeframes < min_timeframes:
+            return (
+                False,
+                f"MTF BLOCK: only {confirmed_timeframes} timeframe "
+                f"confirmation(s); {min_timeframes} required",
+            )
+        return True, "HTF RANGE accepted for dedicated edge/sweep/reversal play"
 
     if bias.direction == "NEUTRAL":
         return (

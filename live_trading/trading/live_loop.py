@@ -35,6 +35,10 @@ from live_trading.config import (
     BAR_CHECK_INTERVAL, RECONNECT_DELAY, SYNC_TIMEOUT,
     MIN_CONFIRMATIONS, REQUIRE_PRICE_ACTION,
     REQUIRE_SMC_PRICE_ACTION_WYCKOFF, USE_ATR_HIGH_VOL_FILTER,
+    CONF_HARD_MIN,
+    RANGE_TRADING_ENABLED, RANGE_MIN_CONFIRMATIONS, RANGE_MIN_RR,
+    RANGE_EDGE_ATR_DISTANCE, RANGE_RISK_PERCENT,
+    MAX_RANGE_TRADES_PER_SESSION,
     DAILY_LOSS_LIMIT_PCT, MAX_DRAWDOWN_PCT, SLIPPAGE_POINTS,
     STATE_FILE, GUARDIAN_STATE_FILE,
     TRAIL_ENABLED, TRAIL_ACTIVATION_R, TRAIL_STEP_R,
@@ -865,6 +869,11 @@ class GoldScalperLive:
             use_atr_high_vol=USE_ATR_HIGH_VOL_FILTER,
             require_price_action=REQUIRE_PRICE_ACTION,
             require_smc_price_action_wyckoff=REQUIRE_SMC_PRICE_ACTION_WYCKOFF,
+            range_trading_enabled=RANGE_TRADING_ENABLED,
+            range_min_confirmations=RANGE_MIN_CONFIRMATIONS,
+            range_min_rr=RANGE_MIN_RR,
+            range_edge_atr_distance=RANGE_EDGE_ATR_DISTANCE,
+            range_risk_percent=RANGE_RISK_PERCENT,
         )
         self.last_decision = decision
 
@@ -988,6 +997,44 @@ class GoldScalperLive:
             )
             return
 
+        # RANGE trades are intentionally scarce.  Count successful RANGE
+        # entries for the current UTC session, including entries restored from
+        # the persisted trade history, so a Render restart cannot reset the
+        # limit and over-trade a choppy market.
+        if decision.regime == "RANGE":
+            session_date = bar_time.date()
+            range_entries = 0
+            for trade in self.trade_history:
+                if not isinstance(trade, dict) or trade.get("regime") != "RANGE":
+                    continue
+                raw_time = trade.get("bar_time") or trade.get("logged_at")
+                try:
+                    trade_date = datetime.fromisoformat(
+                        str(raw_time).replace("Z", "+00:00")
+                    ).date()
+                except (TypeError, ValueError):
+                    continue
+                if trade_date == session_date:
+                    range_entries += 1
+            if range_entries >= MAX_RANGE_TRADES_PER_SESSION:
+                self._set_trade_permission(
+                    False,
+                    "MAX_RANGE_TRADES_PER_SESSION",
+                    [
+                        f"RANGE session limit reached "
+                        f"({MAX_RANGE_TRADES_PER_SESSION})"
+                    ],
+                )
+                log.info(
+                    f"RANGE session limit reached "
+                    f"({MAX_RANGE_TRADES_PER_SESSION}) — skipping entry"
+                )
+                self._write_state(
+                    "SCANNING", acc_info, decision, pos,
+                    extra=self._guardian_extra(gs),
+                )
+                return
+
         # 8b. Gate: Option 2 strict HTF confirmation.
         # A valid entry needs both the active entry timeframe and the HTF to
         # agree, at least 49% confidence, and a non-RANGE directional HTF.
@@ -999,8 +1046,13 @@ class GoldScalperLive:
                 decision.direction,
                 confidence=decision.confidence,
                 confirmed_timeframes=2 if htf_bias is not None else 0,
-                min_confidence=OPTION_TWO_MIN_CONFIDENCE,
+                min_confidence=(
+                    CONF_HARD_MIN
+                    if decision.regime == "RANGE"
+                    else OPTION_TWO_MIN_CONFIDENCE
+                ),
                 min_timeframes=OPTION_TWO_MIN_TIMEFRAMES,
+                allow_range_regime=decision.regime == "RANGE",
             )
             if not _mtf_ok:
                 self._set_trade_permission(False, "MTF_BLOCKED", [_mtf_reason])
