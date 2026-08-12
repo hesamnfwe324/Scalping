@@ -72,11 +72,15 @@ def evaluate_range_entry(
     min_confirmations: int,
     lookback: int = 20,
     edge_atr_distance: float = 0.25,
+    strict_filters: bool = True,
 ) -> RangeContext:
     """Evaluate the explicit range playbook using only closed candles.
 
     The range is measured from the candles before the signal candle so a
     breakout candle cannot move the boundary and accidentally qualify itself.
+    When ``strict_filters`` is false, the range context is still calculated
+    for telemetry and capital sizing, but Option 2's edge/sweep/reversal and
+    confirmation gates are not entry blockers.
     """
     neutral = RangeContext(
         valid=False,
@@ -117,27 +121,39 @@ def evaluate_range_entry(
     sweep = _latest_sweep(smc, direction, len(candles) - 1)
     reversal = _reversal_candle(pa, direction)
     correct_edge = location == ("SUPPORT" if direction == "BUY" else "RESISTANCE")
-    valid = correct_edge and sweep and reversal and confirmation_count >= min_confirmations
-
-    if not correct_edge:
+    if not strict_filters:
+        valid = True
         reason = (
-            f"RANGE entry blocked: price is in the {location.lower()}, "
-            f"not at the {('support' if direction == 'BUY' else 'resistance')} edge"
-        )
-    elif not sweep:
-        reason = "RANGE entry blocked: no fresh same-direction Liquidity Sweep"
-    elif not reversal:
-        reason = "RANGE entry blocked: no closed-candle reversal pattern"
-    elif confirmation_count < min_confirmations:
-        reason = (
-            f"RANGE entry blocked: {confirmation_count}/{min_confirmations} "
-            "confirmations"
+            f"RANGE {direction} accepted: strict Option 2 filters disabled "
+            "(edge/sweep/reversal/confirmation telemetry retained)"
         )
     else:
-        reason = (
-            f"RANGE {direction} accepted: edge + Liquidity Sweep + reversal "
-            f"+ {confirmation_count} confirmations"
+        valid = (
+            correct_edge
+            and sweep
+            and reversal
+            and confirmation_count >= min_confirmations
         )
+
+        if not correct_edge:
+            reason = (
+                f"RANGE entry blocked: price is in the {location.lower()}, "
+                f"not at the {('support' if direction == 'BUY' else 'resistance')} edge"
+            )
+        elif not sweep:
+            reason = "RANGE entry blocked: no fresh same-direction Liquidity Sweep"
+        elif not reversal:
+            reason = "RANGE entry blocked: no closed-candle reversal pattern"
+        elif confirmation_count < min_confirmations:
+            reason = (
+                f"RANGE entry blocked: {confirmation_count}/{min_confirmations} "
+                "confirmations"
+            )
+        else:
+            reason = (
+                f"RANGE {direction} accepted: edge + Liquidity Sweep + reversal "
+                f"+ {confirmation_count} confirmations"
+            )
 
     return RangeContext(
         valid=valid,

@@ -27,6 +27,7 @@ from live_trading.config import (
     CONF_HARD_MIN,
     RANGE_MIN_CONFIRMATIONS,
     REQUIRE_SMC_PRICE_ACTION_WYCKOFF,
+    RANGE_ENTRY_FILTERS_ENABLED,
 )
 
 # Marginal confidence R:R floor: trades with confidence between CONF_HARD_MIN
@@ -168,6 +169,7 @@ def run_decision_engine(
     range_min_rr: float = 1.5,
     range_edge_atr_distance: float = 0.25,
     range_risk_percent: Optional[float] = None,
+    range_entry_filters_enabled: bool = RANGE_ENTRY_FILTERS_ENABLED,
 ) -> DecisionResult:
 
     smc     = analyze_smc_structure(candles)
@@ -209,7 +211,7 @@ def run_decision_engine(
             require_smc_price_action_wyckoff and not is_range_regime
         ),
     )
-    if is_range_regime:
+    if is_range_regime and range_entry_filters_enabled:
         range_votes_ok, range_votes_reason = _range_confirmation_gate(
             ef, range_min_confirmations
         )
@@ -219,7 +221,7 @@ def run_decision_engine(
                 [range_votes_reason],
                 [range_votes_reason],
             )
-    elif not ef.allowed:
+    elif not is_range_regime and not ef.allowed:
         votes = (f"SMC={'✓' if ef.smc else '✗'}  "
                  f"Trend={'✓' if ef.trend else '✗'}  "
                  f"PA={'✓' if ef.price_action else '✗'}  "
@@ -258,6 +260,7 @@ def run_decision_engine(
             confirmation_count=ef.confirmation_count,
             min_confirmations=range_min_confirmations,
             edge_atr_distance=range_edge_atr_distance,
+            strict_filters=range_entry_filters_enabled,
         )
         if not range_context.valid:
             return _make_neutral(

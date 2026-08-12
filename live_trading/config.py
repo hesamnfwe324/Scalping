@@ -175,6 +175,12 @@ RANGE_MIN_CONFIRMATIONS = _int("RANGE_MIN_CONFIRMATIONS", 2, lo=2, hi=4)
 RANGE_MIN_RR = _float("RANGE_MIN_RR", 1.5, lo=1.0, hi=10.0)
 RANGE_EDGE_ATR_DISTANCE = _float("RANGE_EDGE_ATR_DISTANCE", 0.25, lo=0.05, hi=2.0)
 RANGE_RISK_PERCENT = _float("RANGE_RISK_PERCENT", 0.5, lo=0.01, hi=10.0)
+# When false, the RANGE regime remains eligible but its Option 2-specific
+# confirmations (Wyckoff/PA/edge/sweep/reversal) are informational only.
+# Core signal, confidence, sizing, stop, position, and risk gates remain active.
+RANGE_ENTRY_FILTERS_ENABLED = os.getenv(
+    "RANGE_ENTRY_FILTERS_ENABLED", "true"
+).strip().lower() in {"1", "true", "yes", "on"}
 MAX_RANGE_TRADES_PER_SESSION = _int("MAX_RANGE_TRADES_PER_SESSION", 2, lo=1, hi=20)
 # When enabled, every new trade must also have a same-direction Price Action signal.
 # Default false preserves existing behavior until explicitly enabled on Render.

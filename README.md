@@ -116,10 +116,12 @@ Full reference with descriptions: [`live_trading/.env.example`](live_trading/.en
 | `RANGE_MIN_RR` | No | `1.5` | Minimum RANGE risk/reward |
 | `RANGE_EDGE_ATR_DISTANCE` | No | `0.25` | Maximum distance from a RANGE edge in ATR units |
 | `RANGE_RISK_PERCENT` | No | `0.25` | Risk per RANGE trade (% of balance) |
+| `RANGE_ENTRY_FILTERS_ENABLED` | No | `true` | When false, disables only Option 2 RANGE edge/sweep/reversal/confirmation blockers |
 | `MAX_RANGE_TRADES_PER_SESSION` | No | `2` | Successful RANGE entries allowed per UTC session |
 | `MAX_OPEN_TRADES` | No | `1` | Maximum simultaneous open positions |
 | `CONF_HARD_MIN` | No | `32` | Confidence-engine hard floor |
 | `OPTION_TWO_MIN_CONFIDENCE` | No | `49` | MTF confidence floor for the HTF-confirmed entry gate |
+| `MTF_ENABLED` | No | `true` | Enable the Option 1/2 higher-timeframe entry blocker |
 | `QUALITY_ADX_MIN` | No | `12` | Quality filter ADX floor |
 | `DAILY_LOSS_LIMIT_PCT` | No | `4.0` | Guardian: daily loss halt threshold |
 | `MAX_DRAWDOWN_PCT` | No | `12.0` | Guardian: drawdown halt threshold |

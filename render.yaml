@@ -96,6 +96,10 @@ services:
         value: "0.25"
       - key: RANGE_RISK_PERCENT
         value: "0.25"
+      # Option 2: keep RANGE context and telemetry, but do not block entries
+      # on Wyckoff/PA/edge/sweep/reversal completeness.
+      - key: RANGE_ENTRY_FILTERS_ENABLED
+        value: "false"
       - key: MAX_RANGE_TRADES_PER_SESSION
         value: "2"
       - key: MAX_OPEN_TRADES
@@ -126,11 +130,10 @@ services:
         value: "M20,M15,M10,5m"
       - key: QUALITY_ADX_MIN
         value: "12"
-      # H1 remains a mandatory context filter. H1 RANGE is only accepted for
-      # the dedicated lower-timeframe RANGE playbook; it never authorizes
-      # unrestricted mid-range trend entries.
+      # Option 1: disable the H1/MTF entry blocker. The local signal,
+      # confidence, sizing, stop, position, and Guardian gates remain active.
       - key: MTF_ENABLED
-        value: "true"
+        value: "false"
       - key: MTF_TIMEFRAME
         value: "H1"
       - key: MTF_CANDLE_WINDOW

@@ -108,3 +108,27 @@ def test_range_blocks_stale_liquidity_sweep():
     )
     assert not result.valid
     assert "Liquidity Sweep" in result.reason
+
+
+def test_relaxed_range_filters_keep_context_without_blocking():
+    candles = _candles()
+    candles[-1] = OHLCV(
+        time=candles[-1].time,
+        open=105.0,
+        high=106.0,
+        low=104.0,
+        close=105.5,
+        volume=100.0,
+    )
+    result = evaluate_range_entry(
+        candles,
+        "BUY",
+        _smc("BUY", 10),
+        _pa(True),
+        confirmation_count=1,
+        min_confirmations=2,
+        strict_filters=False,
+    )
+    assert result.valid
+    assert result.location == "MIDDLE"
+    assert "strict Option 2 filters disabled" in result.reason

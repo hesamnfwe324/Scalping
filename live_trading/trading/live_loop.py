@@ -38,6 +38,7 @@ from live_trading.config import (
     CONF_HARD_MIN,
     RANGE_TRADING_ENABLED, RANGE_MIN_CONFIRMATIONS, RANGE_MIN_RR,
     RANGE_EDGE_ATR_DISTANCE, RANGE_RISK_PERCENT,
+    RANGE_ENTRY_FILTERS_ENABLED,
     MAX_RANGE_TRADES_PER_SESSION,
     DAILY_LOSS_LIMIT_PCT, MAX_DRAWDOWN_PCT, SLIPPAGE_POINTS,
     STATE_FILE, GUARDIAN_STATE_FILE,
@@ -874,6 +875,7 @@ class GoldScalperLive:
             range_min_rr=RANGE_MIN_RR,
             range_edge_atr_distance=RANGE_EDGE_ATR_DISTANCE,
             range_risk_percent=RANGE_RISK_PERCENT,
+            range_entry_filters_enabled=RANGE_ENTRY_FILTERS_ENABLED,
         )
         self.last_decision = decision
 
