@@ -286,17 +286,18 @@ class RiskGuardian:
             except Exception:
                 self._last_day = None
 
-        # Restore risk limits if they were saved (UPDATE_RISK via panel persists these).
-        # Fall back to the current constructor values (from env vars) if absent,
-        # so cold-start and old Redis entries without these fields still work.
+        # Restore risk limits if they were saved (UPDATE_RISK via panel persists
+        # these). An explicitly configured environment value takes precedence,
+        # so an operator can intentionally change a limit in Render without a
+        # stale Redis snapshot silently putting the old limit back on restart.
         saved_daily_limit = data.get("daily_loss_limit_pct")
-        if saved_daily_limit is not None:
+        if saved_daily_limit is not None and "DAILY_LOSS_LIMIT_PCT" not in os.environ:
             try:
                 self._daily_loss_limit_pct = float(saved_daily_limit)
             except (TypeError, ValueError):
                 pass
         saved_drawdown = data.get("max_drawdown_pct")
-        if saved_drawdown is not None:
+        if saved_drawdown is not None and "MAX_DRAWDOWN_PCT" not in os.environ:
             try:
                 self._max_drawdown_pct = float(saved_drawdown)
             except (TypeError, ValueError):
