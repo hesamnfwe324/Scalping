@@ -259,7 +259,9 @@ LOG_FILE            = os.getenv("LOG_FILE",             "live_trading/robot.log"
 
 # ── Risk Guardian – Circuit Breakers ─────────────────────────────────────────
 # lo=0.1 prevents accidentally disabling protection with 0 or negative values.
-DAILY_LOSS_LIMIT_PCT = _float("DAILY_LOSS_LIMIT_PCT", 3.0,  lo=0.1, hi=50.0)
+# The daily loss circuit breaker may be raised temporarily for controlled
+# paper/live testing, but remains bounded at 100% to reject invalid values.
+DAILY_LOSS_LIMIT_PCT = _float("DAILY_LOSS_LIMIT_PCT", 3.0,  lo=0.1, hi=100.0)
 MAX_DRAWDOWN_PCT     = _float("MAX_DRAWDOWN_PCT",      8.0,  lo=0.1, hi=50.0)
 SLIPPAGE_POINTS      = _int("SLIPPAGE_POINTS",         30,   lo=1,   hi=500)
 
