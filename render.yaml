@@ -2,6 +2,7 @@ services:
   # ─── mt5rest Docker bridge ─────────────────────────────────────────────────
   - type: web
     name: goldscalper-mtapi
+    region: oregon
     runtime: docker
     dockerfilePath: ./mtapi-bridge/Dockerfile
     plan: free
@@ -10,8 +11,9 @@ services:
     # Without this filter, every Python commit (live_trading/, telegram_panel/)
     # triggers an unnecessary Docker redeploy that restarts Wine/MT5 from
     # scratch — the primary cause of the repeated "Failed deploy" status.
-    paths:
-      - mtapi-bridge/**
+    buildFilter:
+      paths:
+        - mtapi-bridge/**
     envVars:
       - key: RENDER_EXTERNAL_URL
         value: "https://goldscalper-mtapi.onrender.com"
@@ -38,6 +40,7 @@ services:
   # ─── Trading robot ─────────────────────────────────────────────────────────
   - type: web
     name: goldscalper-v4-robot
+    region: oregon
     runtime: python
     plan: free
     healthCheckPath: /health
@@ -161,6 +164,7 @@ services:
   # ─── Telegram control panel ────────────────────────────────────────────────
   - type: web
     name: goldscalper-v4-panel
+    region: oregon
     runtime: python
     plan: free
     healthCheckPath: /health
