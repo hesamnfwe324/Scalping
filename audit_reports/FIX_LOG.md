@@ -47,7 +47,7 @@ aiofiles==23.2.1
 **Files Modified:** `render.yaml`
 **Change:**
 1. Added `DAILY_LOSS_LIMIT_PCT: "3.0"`, `MAX_DRAWDOWN_PCT: "8.0"`, `SLIPPAGE_POINTS: "30"` with explanatory comments
-2. Added `goldscalper-v4-panel` worker service with all required env vars
+2. Added `anel` worker service with all required env vars
 3. Added filesystem persistence advisory comments
 **Why Trading Behaviour Is Unchanged:** `render.yaml` sets environment variables. The defaults added match the existing defaults in `config.py` (`DAILY_LOSS_LIMIT_PCT=3.0`, etc.) — effective runtime values are identical to before. No code is modified.
 

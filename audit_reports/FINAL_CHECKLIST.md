@@ -73,7 +73,7 @@
 | CF-01 | `live_trading/config.py` present and complete | ✅ PASS | 55 lines, all 18 vars present |
 | CF-02 | `live_trading/.env.example` present and complete | ✅ PASS | All vars, path overrides commented |
 | CF-03 | `telegram_panel/.env.example` present and correct | ✅ PASS | PANEL_ENCRYPTION_KEY fixed (V-03) |
-| CF-04 | `render.yaml` covers both services | ✅ PASS | goldscalper-v4-robot + goldscalper-v4-panel |
+| CF-04 | `render.yaml` covers both services | ✅ PASS | goper-v4-robot + anel |
 | CF-05 | `Procfile` present | ✅ PASS | Robot only — panel absence documented (D-04) |
 | CF-06 | `robot/tsconfig.json` present | ✅ PASS | Dev tool config |
 

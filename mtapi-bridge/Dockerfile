@@ -49,7 +49,7 @@ COPY --from=socat-source /lib/x86_64-linux-gnu/libwrap.so.0         /lib/x86_64-
 # ROOT CAUSE FIX: mt5rest always listens on port 80, but Render's reverse-proxy
 # routes all external HTTPS traffic — including the /Ping health check — to the
 # container on $PORT (typically 10000+ on the free tier).  Without this fix,
-# Render marks goldscalper-mtapi unhealthy on every health check, restarts it
+# Render marks ger-mtapi unhealthy on every health check, restarts it
 # in a continuous loop, and the trading robot can never establish a stable MT5
 # connection via ConnectEx.  No trades can be placed.
 #

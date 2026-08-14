@@ -48,10 +48,10 @@ the current production values are shown for reference, they are not necessarily 
 
 ```
 Render Project (region must match for all services below)
-├── goldscalper-v4-robot   (Web Service — python live_trading/server.py, healthcheck /health)
-├── goldscalper-v4-panel   (Web Service — python telegram_panel/server.py, healthcheck /health)
-├── goldscalper-mtapi      (Docker Web Service — Wine + MT5 + mt5rest, healthcheck /Ping)
-└── goldscalper-redis      (Render managed Redis, internal network only)
+├── goper-v4-robot   (Web Service — python live_trading/server.py, healthcheck /health)
+├── anel   (Web Service — python telegram_panel/server.py, healthcheck /health)
+├── ger-mtapi      (Docker Web Service — Wine + MT5 + mt5rest, healthcheck /Ping)
+└── ger-redis      (Render managed Redis, internal network only)
 
 No persistent disk is attached or required. Each Python service writes its working files
 (robot_state.json, guardian_state.json, robot_commands.json, panel.db, logs) to its own ephemeral
@@ -96,19 +96,19 @@ architecture note above).
 `render.yaml` declares these as `sync: false`, meaning Render will prompt for them in the dashboard the
 first time you deploy the Blueprint — they are never committed to the repo:
 
-**Robot service (`goldscalper-v4-robot`):**
+**Robot service (`goper-v4-robot`):**
 - `MT5_USER`, `MT5_PASSWORD` — your MT5 broker login/password
 - `ROBOT_COMMAND_TOKEN` — a random shared secret (also set on the panel, must match)
-- `REDIS_URL` — auto-filled by Render from the `goldscalper-redis` service via `fromService`
+- `REDIS_URL` — auto-filled by Render from the `ger-redis` service via `fromService`
 
-**Panel service (`goldscalper-v4-panel`):**
+**Panel service (`anel`):**
 - `TELEGRAM_BOT_TOKEN` — from @BotFather
 - `TELEGRAM_OWNER_ID` — your Telegram numeric user ID
 - `PANEL_ENCRYPTION_KEY` — from `python -m telegram_panel.main --generate-key`
 - `ROBOT_COMMAND_TOKEN` — must match the robot service's value
 - `MT5_USER`, `MT5_PASSWORD` — same broker credentials as the robot
 
-**mtapi bridge (`goldscalper-mtapi`, Docker):**
+**mtapi bridge (`ger-mtapi`, Docker):**
 - `MT5_USER`, `MT5_PASSWORD` — same broker credentials, used by the MT5 terminal running inside the container
 
 ### Step 6 — Deploy and Verify
@@ -328,7 +328,7 @@ After deploying, verify these are working before enabling live capital:
 
 ```bash
 # 1. Robot is connected to the mtapi-bridge and MT5
-# Look for this in robot logs (Render dashboard → goldscalper-v4-robot → Logs):
+# Look for this in robot logs (Render dashboard → goper-v4-robot → Logs):
 ✅ Connected to mt5rest bridge, MT5 account synchronized
 
 # 2. Guardian is initialized

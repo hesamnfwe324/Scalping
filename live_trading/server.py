@@ -53,7 +53,7 @@ _HEARTBEAT_MAX_AGE_SECONDS = 180
 
 # Self-ping keepalive: ping /health every 8 minutes so Render free-tier
 # services never spin down.  10 min < Render's 15-min inactivity threshold.
-# Also pings the mt5rest Docker bridge (goldscalper-mtapi) so it stays alive
+# Also pings the mt5rest Docker bridge (ger-mtapi) so it stays alive
 # even during robot crash/restart cycles when the live loop keepalive is paused.
 _KEEPALIVE_INTERVAL_SECONDS = 360  # 6 minutes — safer margin: 3 pings before Render 15-min sleep
 
@@ -523,7 +523,7 @@ async def _keepalive():
     Render's edge — localhost / 127.0.0.1 requests bypass the edge entirely and
     do NOT reset the timer.
 
-    FIX: Also pings the mt5rest Docker bridge (goldscalper-mtapi) so it stays
+    FIX: Also pings the mt5rest Docker bridge (ger-mtapi) so it stays
     alive even during robot crash/restart cycles when the live-loop's own
     keepalive task is not running.  Without this the bridge goes to sleep during
     the supervisor's backoff window, causing 60-90s wakeup delays on every retry

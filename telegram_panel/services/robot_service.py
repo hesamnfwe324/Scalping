@@ -122,7 +122,7 @@ class RobotService:
         self._config_path = config_path
         self._cmd_path = state_path.replace("state", "commands")
         self._interface_mode = interface_mode
-        # base_url: full URL of the robot service (e.g. https://goldscalper-v4-robot.onrender.com).
+        # base_url: full URL of the robot service (e.g. https://goper-v4-robot.onrender.com).
         # Used by _read_state_http for cross-service communication on Render.
         # When empty, falls back to localhost:{_http_port} for single-machine deployments.
         self._base_url: str = base_url.rstrip("/") if base_url else ""

@@ -8,7 +8,7 @@ Usage:
 
 Required environment variables:
     MTAPI_URL      – URL of your mt5rest Docker service on Render
-                     (e.g. https://goldscalper-mtapi.onrender.com)
+                     (e.g. https://ger-mtapi.onrender.com)
     MT5_HOST       – broker server name (e.g. AMarkets-Demo)
     MT5_USER       – MT5 account login number
     MT5_PASSWORD   – MT5 account password

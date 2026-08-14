@@ -23,7 +23,7 @@
                ▼
 ┌──────────────────────────────┐
 │  mtapi-bridge (Docker)        │  Wine + MT5 terminal + a .NET REST wrapper
-│  goldscalper-mtapi service    │  exposes MT5 as an HTTP API (login/candles/orders)
+│  ger-mtapi service    │  exposes MT5 as an HTTP API (login/candles/orders)
 └──────────────┬────────────────┘
                │
                ▼
@@ -43,7 +43,7 @@
 - The RiskGuardian's halt state (`day_open_balance`, `equity_peak`, halted flag) — this is what lets a halt (or a manual reset) survive a container restart/redeploy
 - Robot state mirrored for the panel to read cross-service
 
-The robot and panel run as separate Render web services with separate, ephemeral `/tmp` filesystems — they cannot share plain JSON files, hence Redis. **The Redis instance must be in the same Render region as both web services**, or its private hostname will not resolve (this exact misconfiguration was found and fixed — see `render.yaml` comment on the `goldscalper-redis` service).
+The robot and panel run as separate Render web services with separate, ephemeral `/tmp` filesystems — they cannot share plain JSON files, hence Redis. **The Redis instance must be in the same Render region as both web services**, or its private hostname will not resolve (this exact misconfiguration was found and fixed — see `render.yaml` comment on the `ger-redis` service).
 
 ---
 
@@ -94,11 +94,11 @@ python -m telegram_panel.main
 
 Full reference with descriptions: [`live_trading/.env.example`](live_trading/.env.example) and [`telegram_panel/.env.example`](telegram_panel/.env.example). The tables below reflect what is actually configured on the live production services (values as of 2026-08-10) — see also `render.yaml`, which is kept in sync with production for a reproducible fresh deploy.
 
-### Live Trading Engine (`goldscalper-v4-robot`)
+### Live Trading Engine (`goper-v4-robot`)
 
 | Variable | Required | Current production value | Description |
 |----------|----------|---------|-------------|
-| `MTAPI_URL` | **YES** | `https://goldscalper-mtapi.onrender.com` | URL of the `mtapi-bridge` Docker service |
+| `MTAPI_URL` | **YES** | `https://ger-mtapi.onrender.com` | URL of the `mtapi-bridge` Docker service |
 | `MT5_HOST` | **YES** | `AMarkets-Demo` | Broker server name |
 | `MT5_PORT` | **YES** | `443` | Broker TCP port |
 | `MT5_USER` | **YES (secret)** | — | MT5 account login number |
@@ -128,7 +128,7 @@ Full reference with descriptions: [`live_trading/.env.example`](live_trading/.en
 | `SLIPPAGE_POINTS` | No | `30` | Max fill slippage in broker points |
 | `STATE_FILE` / `MT5_SNAPSHOT` / `COMMANDS_FILE` / `GUARDIAN_STATE_FILE` / `LOG_FILE` | No | `/tmp/...` | Local file paths — ephemeral, real cross-restart durability comes from Redis (see Architecture above) |
 
-### Telegram Panel (`goldscalper-v4-panel`)
+### Telegram Panel (`anel`)
 
 | Variable | Required | Description |
 |----------|----------|-------------|
@@ -142,7 +142,7 @@ Full reference with descriptions: [`live_trading/.env.example`](live_trading/.en
 | `MT5_HOST` | No | Broker server name |
 | `TELEGRAM_ADMIN_IDS` | No | Comma-separated admin Telegram IDs |
 
-### mt5rest Bridge (`goldscalper-mtapi`, Docker)
+### mt5rest Bridge (`ger-mtapi`, Docker)
 
 | Variable | Required | Description |
 |----------|----------|-------------|
