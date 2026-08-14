@@ -5,6 +5,9 @@ services:
     region: oregon
     runtime: docker
     dockerfilePath: ./mtapi-bridge/Dockerfile
+    # The Dockerfile copies files from mtapi-bridge/; keep the Docker build
+    # context scoped to that directory instead of the repository root.
+    dockerContext: ./mtapi-bridge
     plan: free
     healthCheckPath: /Ping
     # Only redeploy when mtapi-bridge files actually change.
